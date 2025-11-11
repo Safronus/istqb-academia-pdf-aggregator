@@ -6,6 +6,20 @@ from typing import Dict, Optional, Any
 from pypdf import PdfReader
 
 
+def read_pdf_text(path: Path) -> str:
+    """Read text from a PDF using pypdf. Returns empty string on failure."""
+    try:
+        reader = PdfReader(str(path))
+        chunks = []
+        for page in reader.pages:
+            try:
+                chunks.append(page.extract_text() or "")
+            except Exception:
+                pass
+        return "\n".join(chunks)
+    except Exception:
+        return ""
+
 def read_pdf_form_fields(path: Path) -> Dict[str, Any]:
     """
     Return AcroForm fields as a dict using pypdf/PyPDF2 if available.
@@ -26,7 +40,6 @@ def read_pdf_form_fields(path: Path) -> Dict[str, Any]:
         pass
     return {}
 
-
 RE_KV = re.compile(r"^\s*(?P<k>[A-Za-z \-/()®]+):\s*(?P<v>.*)$")
 RE_EMAIL = re.compile(r"[\w\.-]+@[\w\.-]+\.\w+")
 RE_PHONE = re.compile(r"(?:\+\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{3,4}")
@@ -46,10 +59,7 @@ def _bool_from_checkbox(value: Optional[str]) -> Optional[bool]:
     return None
 
 def _pdf_name_to_str(val: object | None) -> Optional[str]:
-    """
-    Convert a PDF Name object like '/New Application' or '/Yes' to plain text.
-    Works with both pypdf and PyPDF2, tolerates plain strings as well.
-    """
+    """Convert a PDF Name '/Something' to 'Something'; tolerate plain strings."""
     if val is None:
         return None
     s = str(val).strip()
@@ -57,10 +67,19 @@ def _pdf_name_to_str(val: object | None) -> Optional[str]:
         s = s[1:]
     return s or None
 
+def _pdf_text_value(field: dict | None) -> Optional[str]:
+    """Extract string from a text field dict (AcroForm /Tx) using '/V'."""
+    if not isinstance(field, dict):
+        return None
+    v = field.get("/V")
+    if v is None:
+        return None
+    return str(v).strip() or None
+
 def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | None = None) -> Dict[str, Optional[str]]:
     """
-    Parse target fields from ISTQB Academia Recognition Program Application PDF text.
-    Prefers values from AcroForm (if provided via form_fields), falls back to regex/text heuristics.
+    Parse target fields from ISTQB Academia Recognition Program Application PDF.
+    Prefers AcroForm values (radio/checkbox/text) via form_fields and falls back to text heuristics.
     """
     norm = text.replace("\xa0", " ")
     lines = [ln.strip() for ln in norm.splitlines() if ln.strip()]
@@ -77,25 +96,38 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
     app_type = None
     academia = None
     certified = None
+    institution = None
+    candidate = None
+    urls = None
 
     if form_fields:
-        # 1) Application Type as radio (/Btn) with value '/New Application' or '/Additional Recognition'
-        f = form_fields.get("Application Type")
-        if isinstance(f, dict):
-            app_type = _pdf_name_to_str(f.get("/V")) or _pdf_name_to_str(f.get("/DV"))
+        # 1) Application Type (radio)
+        f_app = form_fields.get("Application Type")
+        if isinstance(f_app, dict):
+            app_type = _pdf_name_to_str(f_app.get("/V")) or _pdf_name_to_str(f_app.get("/DV"))
+
+        # 2) Institution / Candidate (Section 2 text fields)
+        f_inst = form_fields.get("Name of University High or Technical School")
+        institution = _pdf_text_value(f_inst) or institution
+
+        f_cand = form_fields.get("Name of candidate")
+        candidate = _pdf_text_value(f_cand) or candidate
 
         # 4) Recognition checkboxes
         fa = form_fields.get("AcademiaRecognitionCheck")
         if isinstance(fa, dict):
-            academia = _pdf_name_to_str(fa.get("/V"))
-            academia = "Yes" if academia and academia.lower() == "yes" else ("No" if academia else None)
+            v = _pdf_name_to_str(fa.get("/V"))
+            academia = "Yes" if v and v.lower() == "yes" else ("No" if v else None)
 
         fc = form_fields.get("CertifiedRecognitionCheck")
         if isinstance(fc, dict):
-            certified = _pdf_name_to_str(fc.get("/V"))
-            certified = "Yes" if certified and certified.lower() == "yes" else ("No" if certified else None)
+            v = _pdf_name_to_str(fc.get("/V"))
+            certified = "Yes" if v and v.lower() == "yes" else ("No" if v else None)
 
-    # ---------- Fallbacks from text (kept pro kompatibilitu) ----------
+        # Optional: University links
+        urls = _pdf_text_value(form_fields.get("University website links")) or None
+
+    # ---------- Fallbacks from text ----------
     if not app_type:
         app_type = (
             kv.get("application type")
@@ -104,13 +136,15 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
             or ("Additional Recognition" if "Additional Recognition" in norm else None)
         )
 
-    institution = (
-        kv.get("name of university high or technical school")
-        or kv.get("name of your academic institution")
-        or _take_after("Name of University, High-, or Technical School", norm)
-    )
+    if not institution:
+        institution = (
+            kv.get("name of university high or technical school")
+            or kv.get("name of your academic institution")
+            or _take_after("Name of University, High-, or Technical School", norm)
+        )
 
-    candidate = kv.get("name of candidate") or _take_after("Name of candidate", norm)
+    if not candidate:
+        candidate = kv.get("name of candidate") or _take_after("Name of candidate", norm)
 
     if academia is None:
         academia_raw = (
@@ -165,6 +199,9 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
     if signature_date:
         signature_date = signature_date.strip()
 
+    if urls is None:
+        urls = kv.get("university website links") or None
+
     proof = (
         kv.get("proof of certifications")
         or kv.get("proof of istqb certifications")
@@ -176,8 +213,6 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
         )
         if m:
             proof = re.sub(r"\s+", " ", m.group("blk")).strip()
-
-    urls = kv.get("university website links") or None
 
     return {
         "application_type": app_type,

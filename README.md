@@ -139,6 +139,10 @@ Changed: **CaSTB ➜ CaSQB (Czech and Slovak Quality Board)**.
 
 ## Changelog
 
+### 0.2b — 2025-11-11
+- **Fix:** Read *Name of University, High-, or Technical School* and *Name of candidate* from **Section 2** form fields (AcroForm text fields), not from plain text heuristics.
+
+
 ### 0.2a — 2025-11-11
 - **Fix:** Correctly read *Application Type* from PDF **radio buttons** (prefers AcroForm `/V` value). Prevents misclassification of "New Application" vs "Additional Recognition".
 - Clarified: Board name is derived from the **immediate subfolder** under `PDF/` that contains the file.
