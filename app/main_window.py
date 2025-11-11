@@ -51,7 +51,7 @@ class RecordsModel(QSortFilterProxyModel):
         return False
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        """Stable multi-key ordering: Board → Application Type → Candidate Name."""
+        """Řazení: Board → Application Type → Candidate Name."""
         model = self.sourceModel()
         if model is None:
             return super().lessThan(left, right)
@@ -60,10 +60,9 @@ class RecordsModel(QSortFilterProxyModel):
             idx = model.index(row, col)
             return (model.data(idx, Qt.DisplayRole) or "").strip()
 
-        # With first column "No." added, indices shift by +1:
-        BOARD = 1
-        APP = 2
-        CAND = 4
+        BOARD = 0
+        APP   = 1
+        CAND  = 3
 
         a_board = data(left.row(), BOARD).lower()
         b_board = data(right.row(), BOARD).lower()
@@ -130,7 +129,7 @@ class MainWindow(QMainWindow):
         if model is None:
             return []
         paths: list[str] = []
-        FILE_COL = 17  # last column
+        FILE_COL = 16  # poslední sloupec po odebrání číslování
         if isinstance(model, QSortFilterProxyModel):
             src = model.sourceModel()
             if src is None:
@@ -159,7 +158,7 @@ class MainWindow(QMainWindow):
         if not sel or not sel.hasSelection():
             return None
         index = sel.selectedRows()[0]
-        FILE_COL = 17
+        FILE_COL = 16
         proxy = self.table.model()
         if isinstance(proxy, QSortFilterProxyModel):
             sidx = proxy.mapToSource(proxy.index(index.row(), FILE_COL))
@@ -416,22 +415,21 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
 
         headers = [
-            "No.",
             "Board",
             "Application\nApplication Type",
             "Name of Your Academic Institution\nInstitution Name",
             "Name of Your Academic Institution\nCandidate Name",
             "Wished Recognitions\nAcademia Recognition",
             "Wished Recognitions\nCertified Recognition",
-            "Contact details for information exchange\nFull Name",
-            "Contact details for information exchange\nEmail Address",
-            "Contact details for information exchange\nPhone Number",
-            "Contact details for information exchange\nPostal Address",
-            "Eligibility Evidence\nSyllabi Integration",    # 11  ← hide
-            "Eligibility Evidence\nCourses/Modules",        # 12  ← hide
-            "Eligibility Evidence\nProof of ISTQB Certifications", # 13 ← hide
-            "Eligibility Evidence\nUniversity Links",       # 14  ← hide
-            "Eligibility Evidence\nAdditional Info/Documents", # 15 ← hide
+            "Contact details for Information exchange\nFull Name",
+            "Contact details for Information exchange\nEmail Address",
+            "Contact details for Information exchange\nPhone Number",
+            "Contact details for Information exchange\nPostal Address",
+            "Eligibility Evidence\nSyllabi Integration",      # 10 (HIDE)
+            "Eligibility Evidence\nCourses/Modules",          # 11 (HIDE)
+            "Eligibility Evidence\nProof of ISTQB Certifications",  # 12 (HIDE)
+            "Eligibility Evidence\nUniversity Links",         # 13 (HIDE)
+            "Eligibility Evidence\nAdditional Info/Documents",# 14 (HIDE)
             "Signature\nSignature Date",
             "File\nFile name",
         ]
@@ -439,12 +437,12 @@ class MainWindow(QMainWindow):
         model = QStandardItemModel(0, len(headers), self)
         model.setHorizontalHeaderLabels(headers)
 
-        # Colors (as before)
-        COLS_APPLICATION = [2]
-        COLS_INSTITUTION = [3, 4]
-        COLS_RECOG      = [5, 6]
-        COLS_CONTACT    = [7, 8, 9, 10]
-        COLS_ELIG       = [11, 12, 13, 14, 15]
+        # Barevné skupiny (bez číslování; indexy dle headers výše)
+        COLS_APPLICATION = [1]
+        COLS_INSTITUTION = [2, 3]
+        COLS_RECOG      = [4, 5]
+        COLS_CONTACT    = [6, 7, 8, 9]
+        COLS_ELIG       = [10, 11, 12, 13, 14]
 
         BRUSH_APP   = QBrush(QColor(58, 74, 110))
         BRUSH_INST  = QBrush(QColor(74, 58, 110))
@@ -459,7 +457,7 @@ class MainWindow(QMainWindow):
 
         for rec in self.records:
             row_vals = rec.as_row()
-            items = [QStandardItem("")] + [QStandardItem(v) for v in row_vals]
+            items = [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
@@ -469,30 +467,25 @@ class MainWindow(QMainWindow):
             paint_group(items, COLS_ELIG,       BRUSH_ELIG)
 
             FILE_COL = len(headers) - 1
-            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)  # full path hidden in role
+            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)  # schovaná plná cesta
             model.appendRow(items)
 
         proxy = RecordsModel(headers, self)
         proxy.setSourceModel(model)
         self.table.setModel(proxy)
 
-        # Sizing & sorting
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
-        self.table.sortByColumn(1, Qt.AscendingOrder)
-        self._renumber_rows()
-        try:
-            self.table.model().layoutChanged.connect(self._renumber_rows)
-            self.table.model().modelReset.connect(self._renumber_rows)
-        except Exception:
-            pass
 
-        # HIDE Eligibility columns in Overview
-        for c in (11, 12, 13, 14, 15):
+        # Výchozí řazení: Board
+        self.table.sortByColumn(0, Qt.AscendingOrder)
+
+        # Skryj Eligibility sloupce
+        for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
 
-        # Status bar
+        # Stav
         try:
             self.statusBar().showMessage(f"{len(self.records)} PDF parsed • Root: {self.pdf_root}")
         except Exception:

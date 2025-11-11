@@ -7,7 +7,7 @@ from pypdf import PdfReader
 import logging
 
 def _quiet_pdf_logs() -> None:
-    """Reduce noisy logs from pypdf/PyPDF2 to ERROR to avoid terminal spam."""
+    """Potlačí šum z pypdf/PyPDF2."""
     try:
         logging.getLogger("pypdf").setLevel(logging.ERROR)
     except Exception:
@@ -17,18 +17,45 @@ def _quiet_pdf_logs() -> None:
     except Exception:
         pass
 
-def read_pdf_text(path: Path) -> str:
+def read_pdf_form_fields(path: Path) -> dict:
     """
-    Extract text from PDF with tolerant readers and optional pdfminer fallback.
-    Order:
-      1) pypdf (strict=False)
-      2) PyPDF2 (strict=False)
-      3) pdfminer.six (if installed)
-    Returns empty string if everything fails.
+    Vrátí slovník AcroForm polí (tolerantně; strict=False). Při chybě {}.
     """
     _quiet_pdf_logs()
+    # pypdf
+    try:
+        from pypdf import PdfReader  # type: ignore
+        try:
+            r = PdfReader(str(path), strict=False)
+            get_fields = getattr(r, "get_fields", None)
+            if callable(get_fields):
+                d = get_fields() or {}
+                return d if isinstance(d, dict) else {}
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # PyPDF2
+    try:
+        from PyPDF2 import PdfReader  # type: ignore
+        try:
+            r = PdfReader(str(path), strict=False)
+            get_fields = getattr(r, "get_fields", None)
+            if callable(get_fields):
+                d = get_fields() or {}
+                return d if isinstance(d, dict) else {}
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return {}
 
-    # 1) pypdf
+def read_pdf_text(path: Path) -> str:
+    """
+    Extrakce textu s tolerantními čtečkami + pdfminer fallback.
+    """
+    _quiet_pdf_logs()
+    # pypdf
     try:
         from pypdf import PdfReader  # type: ignore
         try:
@@ -46,8 +73,7 @@ def read_pdf_text(path: Path) -> str:
             pass
     except Exception:
         pass
-
-    # 2) PyPDF2
+    # PyPDF2
     try:
         from PyPDF2 import PdfReader  # type: ignore
         try:
@@ -65,19 +91,141 @@ def read_pdf_text(path: Path) -> str:
             pass
     except Exception:
         pass
-
-    # 3) Optional pdfminer.six (only if available)
+    # pdfminer.six (povinné dle README)
     try:
         from pdfminer.high_level import extract_text as pdfminer_extract_text  # type: ignore
         try:
-            txt = pdfminer_extract_text(str(path)) or ""
-            return txt
+            return pdfminer_extract_text(str(path)) or ""
         except Exception:
-            pass
+            return ""
     except Exception:
-        pass
+        return ""
 
-    return ""
+_MONTHS = {
+    "january":1, "jan":1, "february":2, "feb":2, "march":3, "mar":3, "april":4, "apr":4,
+    "may":5, "june":6, "jun":6, "july":7, "jul":7, "august":8, "aug":8, "september":9, "sep":9, "sept":9,
+    "october":10, "oct":10, "november":11, "nov":11, "december":12, "dec":12
+}
+
+def normalize_signature_date(raw: str | None) -> str | None:
+    """
+    Převede různé běžné varianty data na jednotný formát YYYY-MM-DD.
+    Preferuje den-měsíc-rok, když je formát d/m/yyyy. Vrací None, když se nepodaří.
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    # Odstranit pořadové přípony 1st/2nd/3rd/4th...
+    s = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", s, flags=re.IGNORECASE)
+    # Nahradit více mezer a čárek
+    s = re.sub(r"[,\u3000]+", " ", s).strip()
+
+    def _mk(y: int, m: int, d: int) -> str | None:
+        if 1 <= m <= 12 and 1 <= d <= 31 and 1900 <= y <= 2100:
+            return f"{y:04d}-{m:02d}-{d:02d}"
+        return None
+
+    # 1) ISO-like: YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+    m = re.match(r"^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$", s)
+    if m:
+        y, mm, dd = map(int, m.groups())
+        return _mk(y, mm, dd)
+
+    # 2) D.M.YYYY / D-M-YYYY / D/M/YYYY (den-měsíc-rok)
+    m = re.match(r"^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$", s)
+    if m:
+        d, mm, y = map(int, m.groups())
+        # Pokud první číslo <= 12 a druhé <= 12, je to dvojznačné; držíme se zadání a použijeme D/M/Y
+        return _mk(y, mm, d)
+
+    # 3) Textové: 21 August 2025 / August 21 2025 / 21 August, 2025 / August 21, 2025
+    m = re.match(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$", s)
+    if m:
+        d, mon, y = m.groups()
+        mm = _MONTHS.get(mon.lower())
+        if mm:
+            return _mk(int(y), mm, int(d))
+    m = re.match(r"^([A-Za-z]+)\s+(\d{1,2})\s+(\d{4})$", s)
+    if m:
+        mon, d, y = m.groups()
+        mm = _MONTHS.get(mon.lower())
+        if mm:
+            return _mk(int(y), mm, int(d))
+
+    # 4) Pouze měsíc-název + čárky: August 21, 2025 / 21 August, 2025
+    m = re.match(r"^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$", s)
+    if m:
+        mon, d, y = m.groups()
+        mm = _MONTHS.get(mon.lower())
+        if mm:
+            return _mk(int(y), mm, int(d))
+    m = re.match(r"^(\d{1,2})\s+([A-Za-z]+),\s*(\d{4})$", s)
+    if m:
+        d, mon, y = m.groups()
+        mm = _MONTHS.get(mon.lower())
+        if mm:
+            return _mk(int(y), mm, int(d))
+
+    # 5) Zkuste vytáhnout čisté číslice typu YYYY M D (oddělené mezerami)
+    m = re.match(r"^(\d{4})\s+(\d{1,2})\s+(\d{1,2})$", s)
+    if m:
+        y, mm, d = map(int, m.groups())
+        return _mk(y, mm, d)
+
+    return None
+
+# Klíče, které v praxi vídáme u formulářů pro datum
+_SIG_DATE_CAND_KEYS = (
+    "signature date", "date", "signature_date", "signature date_af_date", "signature_af_date",
+    "Signature Date_af_date", "Signature Date", "Date"
+)
+
+# Různé formy data v textu (jen vzory; validuje normalize_signature_date)
+_DATE_TOKEN_RE = re.compile(
+    r"\b("
+    r"\d{4}[./-]\d{1,2}[./-]\d{1,2}"         # 2025-09-26, 2025/8/20, 2025.8.19
+    r"|"
+    r"\d{1,2}[./-]\d{1,2}[./-]\d{4}"         # 28/09/2025, 19.8.2025
+    r"|"
+    r"(?:\d{1,2}(?:st|nd|rd|th)?\s+)?[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*)?\s*\d{4}"  # August 21, 2025 / 21st August 2025
+    r")\b",
+    re.IGNORECASE
+)
+
+def guess_signature_date(fields: dict, text: str) -> str | None:
+    """
+    1) Zkuste pole formuláře s „Signature“/„Date“ (různé názvy).
+    2) Jinak projděte text (sekce 6) a hledejte datum.
+    Vrátí normalizovaný string YYYY-MM-DD nebo None.
+    """
+    # 1) Form fields
+    for k, v in (fields or {}).items():
+        key = str(k).strip().lower()
+        if any(x in key for x in _SIG_DATE_CAND_KEYS):
+            raw = None
+            # pypdf/PyPDF2 mívají /V nebo přímo string
+            if isinstance(v, dict):
+                raw = v.get("/V") or v.get("V")
+            if raw is None and not isinstance(v, dict):
+                raw = str(v)
+            raw = str(raw) if raw is not None else None
+            iso = normalize_signature_date(raw)
+            if iso:
+                return iso
+
+    # 2) Text (zkusíme omezit na část okolo „6. Declaration“ – pokud existuje)
+    scope = text or ""
+    m_scope = re.search(r"\b6\.\s*Declaration.*", scope, flags=re.IGNORECASE | re.DOTALL)
+    if m_scope:
+        scope = m_scope.group(0)
+    for m in _DATE_TOKEN_RE.finditer(scope):
+        iso = normalize_signature_date(m.group(0))
+        if iso:
+            return iso
+
+    return None
 
 def read_pdf_form_fields(path: Path) -> Dict[str, Any]:
     """

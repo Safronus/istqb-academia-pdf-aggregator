@@ -30,11 +30,6 @@ class PdfRecord:
     board_known: bool
 
     def as_row(self) -> List[str]:
-        # Board | Application Type | Institution Name | Candidate Name |
-        # Academia Rec | Certified Rec |
-        # Contact: Full | Email | Phone | Postal |
-        # Eligibility: Syllabi | Courses | Proof | Links | Additional |
-        # Signature Date | File name (only)
         return [
             self.board or "",
             self.application_type or "",
@@ -52,7 +47,7 @@ class PdfRecord:
             self.university_links or "",
             self.additional_information_documents or "",
             self.signature_date or "",
-            self.path.name,  # <- only file name here
+            self.path.name,
         ]
 
     def to_dict(self) -> Dict:
@@ -75,30 +70,84 @@ class PdfScanner:
         except Exception:
             return "Unknown"
 
-    def _parse_one(self, pdf_path: Path) -> PdfRecord:
-        text = read_pdf_text(pdf_path)
-        form_fields = read_pdf_form_fields(pdf_path)
-        fields = parse_istqb_academia_application(text, form_fields=form_fields)
-        board = self._derive_board(pdf_path)
+    def _parse_one(self, path: Path) -> PdfRecord:
+        fields = read_pdf_form_fields(path)
+        text = read_pdf_text(path)
+
+        def fval(*keys: str) -> str | None:
+            if not fields:
+                return None
+            for k in fields.keys():
+                kk = str(k).strip().lower()
+                for probe in keys:
+                    if probe in kk:
+                        v = fields[k]
+                        # /V hodnota, případně string
+                        if isinstance(v, dict):
+                            val = v.get("/V") or v.get("V")
+                        else:
+                            val = str(v)
+                        if val is None:
+                            continue
+                        s = str(val).strip()
+                        if s:
+                            return s
+            return None
+
+        # Application type (radio)
+        app_type = fval("application type") or ""
+        app_type = app_type.strip()
+
+        # Institution & candidate (sekce 2)
+        institution = fval("name of university", "high", "technical school") or ""
+        candidate = fval("name of candidate") or ""
+
+        # Recognitions (sekce 3)
+        recog_acad = fval("academiarecognitioncheck") or fval("academia recognition") or ""
+        recog_cert = fval("certifiedrecognitioncheck") or fval("certified recognition") or ""
+        # Normalizace přepínačů Ano/Off → Yes/No
+        def norm_check(s: str) -> str:
+            s = s.strip().lower()
+            return "Yes" if s in ("yes", "on", "true", "1", "checked") else ("No" if s in ("no", "off", "false", "0") else s or "")
+        recog_acad = norm_check(recog_acad)
+        recog_cert = norm_check(recog_cert)
+
+        # Contacts (sekce 4)
+        contact_name  = fval("full name", "contact name") or ""
+        contact_email = fval("email") or ""
+        contact_phone = fval("phone") or ""
+        contact_addr  = fval("postal address") or ""
+
+        # Signature date – klíčová část: form fields → text; vždy YYYY-MM-DD
+        sig_iso = guess_signature_date(fields, text) or ""
+
+        # Eligibility (sekce 5) – načítáme, ale v Overview skryjeme
+        syllabi_desc = fval("syllabi", "integrated") or ""
+        courses_list = fval("courses/modules", "courses and modules", "courses") or ""
+        proof_cert   = fval("proof of istqb", "proof of certifications") or ""
+        uni_links    = fval("university website", "website links") or ""
+        addl_info    = fval("additional relevant information", "additional information") or ""
+
+        board = self._derive_board(path)
         return PdfRecord(
             board=board,
-            path=pdf_path,
-            size_bytes=pdf_path.stat().st_size,
-            application_type=fields.get("application_type"),
-            institution_name=fields.get("institution_name"),
-            candidate_name=fields.get("candidate_name"),
-            recognition_academia=fields.get("recognition_academia"),
-            recognition_certified=fields.get("recognition_certified"),
-            contact_full_name=fields.get("contact_full_name"),
-            contact_email=fields.get("contact_email"),
-            contact_phone=fields.get("contact_phone"),
-            contact_postal_address=fields.get("contact_postal_address"),
-            signature_date=fields.get("signature_date"),
-            proof_of_istqb_certifications=fields.get("proof_of_istqb_certifications"),
-            syllabi_integration_description=fields.get("syllabi_integration_description"),
-            courses_modules_list=fields.get("courses_modules_list"),
-            university_links=fields.get("university_links"),
-            additional_information_documents=fields.get("additional_information_documents"),
+            path=path,
+            size_bytes=path.stat().st_size,
+            application_type=app_type or None,
+            institution_name=institution or None,
+            candidate_name=candidate or None,
+            recognition_academia=recog_acad or None,
+            recognition_certified=recog_cert or None,
+            contact_full_name=contact_name or None,
+            contact_email=contact_email or None,
+            contact_phone=contact_phone or None,
+            contact_postal_address=contact_addr or None,
+            signature_date=sig_iso or None,
+            proof_of_istqb_certifications=proof_cert or None,
+            syllabi_integration_description=syllabi_desc or None,
+            courses_modules_list=courses_list or None,
+            university_links=uni_links or None,
+            additional_information_documents=addl_info or None,
             board_known=board in KNOWN_BOARDS,
         )
 
