@@ -1,32 +1,43 @@
 from __future__ import annotations
 
-# Curated, extendable list of widely used ISTQB Member Boards.
-# Unknown names are allowed by the app; this set is used only to hint validity.
+# Extendable set of known ISTQB Member Boards.
+# Unknown names are allowed; this set is for hinting only.
 KNOWN_BOARDS = {
-    # Europe
-    "CaSTB",  # Czech and Slovak Testing Board
+    # EMEA / Europe
+    "CaSQB",  # Czech and Slovak Quality Board (renamed from CaSTB)
     "GTB",    # German Testing Board
     "STB",    # Swiss Testing Board
     "UKITB",  # UK and Ireland Testing Board
     "BNTQB",  # Belgium and Netherlands Testing Qualifications Board
     "ATB",    # Austrian Testing Board
     "SEETB",  # South East European Testing Board
-    "MSTB",   # Malaysia Software Testing Board (often APAC, listed here for completeness)
     "SSTQB",  # Spanish Software Testing Qualifications Board
-    "CFTL",   # Comité Français des Tests Logiciels (France)
+    "CFTL",   # Comité Français des Tests Logiciels
     "PSTB",   # Polish Software Testing Board
+    "ISTB",   # Italian Software Testing Board
+    "DSTB",   # Danish Software Testing Board
+    "FiSTB",  # Finnish Software Testing Board
+    "NQTB",   # Norwegian
+    "SASTQB", # South African Software Testing Qualifications Board
+    "HASTQB", # Hispanoamerican
+    "LSTQB",  # Latvian
+    "LTB",    # Lithuanian Testing Board
+    "GRTB",   # Greek
+    "PTQB",   # Portuguese
+    "TMMi",   # sometimes used in folder naming alongside boards
 
     # Americas
     "ASTQB",  # American Software Testing Qualifications Board
-    "BSTQB",  # Brazilian Software Testing Qualifications Board
-    "CSTB",   # Canadian Software Testing Board
+    "BSTQB",  # Brazilian
+    "CSTB",   # Canadian
 
-    # APAC
+    # APAC / Others
     "ANZTB",  # Australian and New Zealand Testing Board
-    "FiSTB",  # Finnish Software Testing Board
-    "LSTQB",  # Latvian Software Testing Qualifications Board
-    "NGSTQB", # Nigerian Software Testing and Qualifications Board (EMEA)
+    "MSTB",   # Malaysia Software Testing Board
     "SLSTB",  # Sri Lanka Software Testing Board
-    "HASTQB", # Hispanoamerican (regional), used in some folder namings
-    # Add more as needed...
+    "INDSTB", # India (some orgs use this code)
+    "HSTQB",  # Hong Kong
+    "JSTQB",  # Japan
+    "SWTB",   # Sweden (legacy/alt naming)
+    "NGSTQB", # Nigeria (EMEA)
 }

@@ -83,12 +83,125 @@ class MainWindow(QMainWindow):
         open_action = QAction("Open Selected PDF", self)
         open_action.triggered.connect(self.open_selected_pdf)
 
+        export_csv_action = QAction("Export CSV (visible rows)…", self)
+        export_csv_action.triggered.connect(self.export_csv)
+
+        export_xlsx_action = QAction("Export XLSX (visible rows)…", self)
+        export_xlsx_action.triggered.connect(self.export_xlsx)
+
         about_action = QAction("About", self)
         about_action.triggered.connect(self._about)
 
+        # Minimal-change: actions directly on menubar (no new menus introduced)
         self.menuBar().addAction(rescan_action)
         self.menuBar().addAction(open_action)
+        self.menuBar().addAction(export_csv_action)
+        self.menuBar().addAction(export_xlsx_action)
         self.menuBar().addAction(about_action)
+        
+    def _gather_visible_records(self) -> list[PdfRecord]:
+        """Return records corresponding to the currently visible rows in the table."""
+        model = self.table.model()
+        if model is None:
+            return []
+        paths: list[str] = []
+        if isinstance(model, QSortFilterProxyModel):
+            source = model.sourceModel()
+            if source is None:
+                return []
+            for r in range(model.rowCount()):
+                # Column 12 = File (path)
+                src_idx = model.mapToSource(model.index(r, 12))
+                path_str = source.index(src_idx.row(), 12).data()
+                if path_str:
+                    paths.append(str(path_str))
+        else:
+            for r in range(model.rowCount()):
+                path_str = model.index(r, 12).data()
+                if path_str:
+                    paths.append(str(path_str))
+
+        out: list[PdfRecord] = []
+        for p in paths:
+            rec = next((x for x in self.records if str(x.path) == p), None)
+            if rec:
+                out.append(rec)
+        return out
+    
+    def export_csv(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        import csv
+
+        records = self._gather_visible_records()
+        if not records:
+            QMessageBox.information(self, "Export CSV", "No rows to export (check filters/search).")
+            return
+
+        default_name = str((self.pdf_root / "export.csv"))
+        path, _ = QFileDialog.getSaveFileName(self, "Save CSV", default_name, "CSV Files (*.csv)")
+        if not path:
+            return
+
+        headers = [
+            "Board", "Application Type", "Institution Name", "Candidate Name",
+            "Recognition Academia", "Recognition Certified",
+            "Contact Name", "Email", "Phone", "Postal Address",
+            "Signature Date", "Proof of ISTQB Certifications", "File"
+        ]
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                for r in records:
+                    writer.writerow(r.as_row())
+            QMessageBox.information(self, "Export CSV", f"Exported {len(records)} rows to:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export CSV", f"Failed to write CSV:\n{e}")
+            
+    def export_xlsx(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        try:
+            from openpyxl import Workbook
+        except Exception:
+            QMessageBox.critical(
+                self, "Export XLSX",
+                "The 'openpyxl' package is required for XLSX export.\n"
+                "Install it in your environment:\n\npip install openpyxl"
+            )
+            return
+
+        records = self._gather_visible_records()
+        if not records:
+            QMessageBox.information(self, "Export XLSX", "No rows to export (check filters/search).")
+            return
+
+        default_name = str((self.pdf_root / "export.xlsx"))
+        path, _ = QFileDialog.getSaveFileName(self, "Save XLSX", default_name, "Excel Workbook (*.xlsx)")
+        if not path:
+            return
+
+        headers = [
+            "Board", "Application Type", "Institution Name", "Candidate Name",
+            "Recognition Academia", "Recognition Certified",
+            "Contact Name", "Email", "Phone", "Postal Address",
+            "Signature Date", "Proof of ISTQB Certifications", "File"
+        ]
+
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "ISTQB Applications"
+            ws.append(headers)
+            for r in records:
+                ws.append(r.as_row())
+            # Auto width (simple heuristic)
+            for col in ws.columns:
+                max_len = max(len(str(c.value)) if c.value is not None else 0 for c in col)
+                ws.column_dimensions[col[0].column_letter].width = min(max(12, max_len + 2), 60)
+            wb.save(path)
+            QMessageBox.information(self, "Export XLSX", f"Exported {len(records)} rows to:\n{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export XLSX", f"Failed to write XLSX:\n{e}")
 
     def _about(self) -> None:
         QMessageBox.information(
