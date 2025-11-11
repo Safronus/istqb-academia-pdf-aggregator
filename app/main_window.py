@@ -60,15 +60,14 @@ class RecordsModel(QSortFilterProxyModel):
             idx = model.index(row, col)
             return (model.data(idx, Qt.DisplayRole) or "").strip()
 
-        # Column indices in our Overview layout:
-        BOARD = 0
-        APP = 1
-        CAND = 3
+        # With first column "No." added, indices shift by +1:
+        BOARD = 1
+        APP = 2
+        CAND = 4
 
         a_board = data(left.row(), BOARD).lower()
         b_board = data(right.row(), BOARD).lower()
 
-        # Application Type order map
         order = {"new application": 0, "additional recognition": 1}
         a_app = order.get(data(left.row(), APP).lower(), 2)
         b_app = order.get(data(right.row(), APP).lower(), 2)
@@ -77,7 +76,6 @@ class RecordsModel(QSortFilterProxyModel):
         b_cand = data(right.row(), CAND).lower()
 
         return (a_board, a_app, a_cand) < (b_board, b_app, b_cand)
-
 
 class MainWindow(QMainWindow):
     def __init__(self, pdf_root: Path):
@@ -377,6 +375,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
 
         headers = [
+            "No.",
             "Board",
             "Application\nApplication Type",
             "Name of Your Academic Institution\nInstitution Name",
@@ -399,13 +398,13 @@ class MainWindow(QMainWindow):
         model = QStandardItemModel(0, len(headers), self)
         model.setHorizontalHeaderLabels(headers)
 
-        # Barevné skupiny (jemné odstíny pro dark theme)
-        COLS_APPLICATION = [1]
-        COLS_INSTITUTION = [2, 3]
-        COLS_RECOG      = [4, 5]
-        COLS_CONTACT    = [6, 7, 8, 9]
-        COLS_ELIG       = [10, 11, 12, 13, 14]
-        # barvy skupin buněk
+        # Column groups (cell background colors; indices reflect "No." at col 0)
+        COLS_APPLICATION = [2]
+        COLS_INSTITUTION = [3, 4]
+        COLS_RECOG      = [5, 6]
+        COLS_CONTACT    = [7, 8, 9, 10]
+        COLS_ELIG       = [11, 12, 13, 14, 15]
+
         BRUSH_APP   = QBrush(QColor(58, 74, 110))
         BRUSH_INST  = QBrush(QColor(74, 58, 110))
         BRUSH_RECOG = QBrush(QColor(58, 110, 82))
@@ -417,36 +416,53 @@ class MainWindow(QMainWindow):
                 if 0 <= c < len(items):
                     items[c].setBackground(brush)
 
-        # Naplnění řádků + barvy buněk
         for rec in self.records:
-            row_vals = rec.as_row()
-            items = [QStandardItem(val) for val in row_vals]
+            row_vals = rec.as_row()  # 17 columns (without No.)
+            # prepend "No." placeholder (will be renumbered after sort/filter)
+            items = [QStandardItem("")] + [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
-            # obarvit skupiny
+
+            # Color groups
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
             paint_group(items, COLS_RECOG,      BRUSH_RECOG)
             paint_group(items, COLS_CONTACT,    BRUSH_CONT)
             paint_group(items, COLS_ELIG,       BRUSH_ELIG)
+
+            # Store full path (hidden) to the last column item for reliable open/export
+            FILE_COL = len(headers) - 1
+            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
+
             model.appendRow(items)
 
         proxy = RecordsModel(headers, self)
         proxy.setSourceModel(model)
         self.table.setModel(proxy)
 
-        # Přizpůsobení šířek, zapnutí řazení
+        # Centered headers, sizing, sorting
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
-        self.table.sortByColumn(0, Qt.AscendingOrder)
+        self.table.sortByColumn(1, Qt.AscendingOrder)  # sort to trigger lessThan
 
-        # Stav do status baru (počet souborů a sledovaná složka)
+        # Renumber "No." column to reflect current proxy order
+        self._renumber_rows()
+
+        # Connect to renumber on sort/filter changes
+        try:
+            self.table.model().layoutChanged.connect(self._renumber_rows)
+            self.table.model().modelReset.connect(self._renumber_rows)
+        except Exception:
+            pass
+
+        # Status bar
         try:
             self.statusBar().showMessage(f"{len(self.records)} PDF parsed • Root: {self.pdf_root}")
         except Exception:
             pass
 
-        # (Re)build watchers po úspěšném scan-u
+        # Rebuild FS watchers
         self._rebuild_watch_list()
 
     # ----- Actions -----

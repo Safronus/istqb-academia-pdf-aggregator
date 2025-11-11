@@ -5,18 +5,44 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 from pypdf import PdfReader
 
-
 def read_pdf_text(path: Path) -> str:
-    """Read text from a PDF using pypdf. Returns empty string on failure."""
+    """
+    Read text from a PDF trying pypdf and PyPDF2 as fallbacks.
+    Returns empty string on failure.
+    """
+    # Try pypdf first
     try:
-        reader = PdfReader(str(path))
-        chunks = []
-        for page in reader.pages:
-            try:
-                chunks.append(page.extract_text() or "")
-            except Exception:
-                pass
-        return "\n".join(chunks)
+        from pypdf import PdfReader  # type: ignore
+        try:
+            r = PdfReader(str(path))
+            chunks: list[str] = []
+            for p in r.pages:
+                try:
+                    chunks.append(p.extract_text() or "")
+                except Exception:
+                    pass
+            text = "\n".join(chunks)
+            if text.strip():
+                return text
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Fallback to PyPDF2
+    try:
+        from PyPDF2 import PdfReader  # type: ignore
+        try:
+            r = PdfReader(str(path))
+            chunks: list[str] = []
+            for p in r.pages:
+                try:
+                    chunks.append(p.extract_text() or "")
+                except Exception:
+                    pass
+            return "\n".join(chunks)
+        except Exception:
+            return ""
     except Exception:
         return ""
 

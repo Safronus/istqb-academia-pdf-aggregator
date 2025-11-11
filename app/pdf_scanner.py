@@ -30,12 +30,11 @@ class PdfRecord:
     board_known: bool
 
     def as_row(self) -> List[str]:
-        # Column order for Overview (grouped):
         # Board | Application Type | Institution Name | Candidate Name |
         # Academia Rec | Certified Rec |
         # Contact: Full | Email | Phone | Postal |
         # Eligibility: Syllabi | Courses | Proof | Links | Additional |
-        # Signature Date | File
+        # Signature Date | File name (only)
         return [
             self.board or "",
             self.application_type or "",
@@ -53,7 +52,7 @@ class PdfRecord:
             self.university_links or "",
             self.additional_information_documents or "",
             self.signature_date or "",
-            str(self.path),
+            self.path.name,  # <- only file name here
         ]
 
     def to_dict(self) -> Dict:
