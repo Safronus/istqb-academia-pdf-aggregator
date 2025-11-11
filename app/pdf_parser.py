@@ -4,64 +4,110 @@ import re
 from pathlib import Path
 from typing import Dict, Optional, Any
 from pypdf import PdfReader
+import logging
+
+def _quiet_pdf_logs() -> None:
+    """Reduce noisy logs from pypdf/PyPDF2 to ERROR to avoid terminal spam."""
+    try:
+        logging.getLogger("pypdf").setLevel(logging.ERROR)
+    except Exception:
+        pass
+    try:
+        logging.getLogger("PyPDF2").setLevel(logging.ERROR)
+    except Exception:
+        pass
 
 def read_pdf_text(path: Path) -> str:
     """
-    Read text from a PDF trying pypdf and PyPDF2 as fallbacks.
-    Returns empty string on failure.
+    Extract text from PDF with tolerant readers and optional pdfminer fallback.
+    Order:
+      1) pypdf (strict=False)
+      2) PyPDF2 (strict=False)
+      3) pdfminer.six (if installed)
+    Returns empty string if everything fails.
     """
-    # Try pypdf first
+    _quiet_pdf_logs()
+
+    # 1) pypdf
     try:
         from pypdf import PdfReader  # type: ignore
         try:
-            r = PdfReader(str(path))
+            r = PdfReader(str(path), strict=False)
             chunks: list[str] = []
             for p in r.pages:
                 try:
                     chunks.append(p.extract_text() or "")
                 except Exception:
                     pass
-            text = "\n".join(chunks)
-            if text.strip():
-                return text
+            txt = "\n".join(chunks)
+            if txt.strip():
+                return txt
         except Exception:
             pass
     except Exception:
         pass
 
-    # Fallback to PyPDF2
+    # 2) PyPDF2
     try:
         from PyPDF2 import PdfReader  # type: ignore
         try:
-            r = PdfReader(str(path))
+            r = PdfReader(str(path), strict=False)
             chunks: list[str] = []
             for p in r.pages:
                 try:
                     chunks.append(p.extract_text() or "")
                 except Exception:
                     pass
-            return "\n".join(chunks)
+            txt = "\n".join(chunks)
+            if txt.strip():
+                return txt
         except Exception:
-            return ""
+            pass
     except Exception:
-        return ""
+        pass
+
+    # 3) Optional pdfminer.six (only if available)
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract_text  # type: ignore
+        try:
+            txt = pdfminer_extract_text(str(path)) or ""
+            return txt
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    return ""
 
 def read_pdf_form_fields(path: Path) -> Dict[str, Any]:
     """
-    Return AcroForm fields as a dict using pypdf/PyPDF2 if available.
-    Keys are field names; values are raw field dicts (PyPDF2/pypdf model).
-    If no form or error, returns {}.
+    Return AcroForm fields using pypdf/PyPDF2 with strict=False (tolerant).
+    On any error, returns {} without raising.
     """
+    _quiet_pdf_logs()
+    # Try pypdf
     try:
         try:
             from pypdf import PdfReader  # type: ignore
+            reader = PdfReader(str(path), strict=False)
+            get_fields = getattr(reader, "get_fields", None)
+            if callable(get_fields):
+                fields = get_fields() or {}
+                if isinstance(fields, dict):
+                    return fields
         except Exception:
+            pass
+        # Fallback to PyPDF2
+        try:
             from PyPDF2 import PdfReader  # type: ignore
-        reader = PdfReader(str(path))
-        get_fields = getattr(reader, "get_fields", None)
-        if callable(get_fields):
-            fields = get_fields() or {}
-            return fields
+            reader = PdfReader(str(path), strict=False)
+            get_fields = getattr(reader, "get_fields", None)
+            if callable(get_fields):
+                fields = get_fields() or {}
+                if isinstance(fields, dict):
+                    return fields
+        except Exception:
+            pass
     except Exception:
         pass
     return {}
