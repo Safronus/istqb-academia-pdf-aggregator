@@ -139,6 +139,10 @@ Changed: **CaSTB ➜ CaSQB (Czech and Slovak Quality Board)**.
 
 ## Changelog
 
+### 0.2c — 2025-11-11
+- **Fix:** Read **Contact details (Section 4)** from AcroForm text fields: *Full Name*, *Email Address*, *Phone Number*, *Postal Address* (field names mapped from `Contact name`, `Contact email`, `Contact phone`, `Postal address`). Falls back to text heuristics if fields missing.
+
+
 ### 0.2b — 2025-11-11
 - **Fix:** Read *Name of University, High-, or Technical School* and *Name of candidate* from **Section 2** form fields (AcroForm text fields), not from plain text heuristics.
 
