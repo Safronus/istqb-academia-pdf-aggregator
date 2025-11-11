@@ -130,21 +130,22 @@ class MainWindow(QMainWindow):
         if model is None:
             return []
         paths: list[str] = []
-        FILE_COL = 16
+        FILE_COL = 17  # last column
         if isinstance(model, QSortFilterProxyModel):
-            source = model.sourceModel()
-            if source is None:
+            src = model.sourceModel()
+            if src is None:
                 return []
             for r in range(model.rowCount()):
-                src_idx = model.mapToSource(model.index(r, FILE_COL))
-                path_str = source.index(src_idx.row(), FILE_COL).data()
-                if path_str:
-                    paths.append(str(path_str))
+                pidx = model.index(r, FILE_COL)
+                sidx = model.mapToSource(pidx)
+                val = src.index(sidx.row(), FILE_COL).data(Qt.UserRole + 1)
+                if val:
+                    paths.append(str(val))
         else:
             for r in range(model.rowCount()):
-                path_str = model.index(r, FILE_COL).data()
-                if path_str:
-                    paths.append(str(path_str))
+                val = model.index(r, FILE_COL).data(Qt.UserRole + 1)
+                if val:
+                    paths.append(str(val))
 
         out: list[PdfRecord] = []
         for p in paths:
@@ -152,6 +153,25 @@ class MainWindow(QMainWindow):
             if rec:
                 out.append(rec)
         return out
+
+    def _selected_record(self) -> Optional[PdfRecord]:
+        sel = self.table.selectionModel()
+        if not sel or not sel.hasSelection():
+            return None
+        index = sel.selectedRows()[0]
+        FILE_COL = 17
+        proxy = self.table.model()
+        if isinstance(proxy, QSortFilterProxyModel):
+            sidx = proxy.mapToSource(proxy.index(index.row(), FILE_COL))
+            src = proxy.sourceModel()
+        else:
+            sidx = index
+            src = self.table.model()
+        path_str = src.index(sidx.row(), FILE_COL).data(Qt.UserRole + 1)
+        for r in self.records:
+            if str(r.path) == path_str:
+                return r
+        return None
 
     def export_csv(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -576,6 +596,21 @@ class MainWindow(QMainWindow):
             rec = None
 
         self._update_detail_panel(rec)
+
+    def _renumber_rows(self) -> None:
+        """Write 1..N into the 'No.' column in source model according to current proxy order."""
+        proxy = self.table.model()
+        if not isinstance(proxy, QSortFilterProxyModel):
+            return
+        src = proxy.sourceModel()
+        if src is None:
+            return
+        # NUM col = 0
+        for r in range(proxy.rowCount()):
+            pidx = proxy.index(r, 0)  # any column maps row; col 0 exists
+            sidx = proxy.mapToSource(pidx)
+            # Set display text to 1-based row number
+            src.setData(src.index(sidx.row(), 0), str(r + 1), Qt.DisplayRole)
 
     def _update_detail_panel(self, rec: Optional[PdfRecord]) -> None:
         if rec is None:
