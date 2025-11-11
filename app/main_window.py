@@ -173,13 +173,30 @@ class MainWindow(QMainWindow):
                 return r
         return None
 
+    def _visible_columns(self) -> list[int]:
+        """Return list of column indices currently visible in the table (proxy)."""
+        model = self.table.model()
+        if model is None:
+            return []
+        cols = model.columnCount()
+        visible = []
+        for c in range(cols):
+            if not self.table.isColumnHidden(c):
+                visible.append(c)
+        return visible
+
     def export_csv(self) -> None:
         from PySide6.QtWidgets import QFileDialog
         import csv
 
-        records = self._gather_visible_records()
-        if not records:
-            QMessageBox.information(self, "Export CSV", "No rows to export (check filters/search).")
+        model = self.table.model()
+        if model is None:
+            QMessageBox.information(self, "Export CSV", "No data to export.")
+            return
+
+        visible_cols = self._visible_columns()
+        if not visible_cols:
+            QMessageBox.information(self, "Export CSV", "No visible columns to export.")
             return
 
         default_name = str((self.pdf_root / "export.csv"))
@@ -187,23 +204,23 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        # Build headers from the current model (replace newlines for CSV)
+        # Build headers from visible columns (display text, newlines replaced)
         headers_list: list[str] = []
-        src = self.table.model()
-        if isinstance(src, QSortFilterProxyModel):
-            src = src.sourceModel()
-        if src:
-            for c in range(src.columnCount()):
-                h = src.headerData(c, Qt.Horizontal, Qt.DisplayRole) or ""
-                headers_list.append(str(h).replace("\n", " • "))
+        for c in visible_cols:
+            h = model.headerData(c, Qt.Horizontal, Qt.DisplayRole) or ""
+            headers_list.append(str(h).replace("\n", " • "))
 
         try:
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
                 writer.writerow(headers_list)
-                for r in records:
-                    writer.writerow(r.as_row())
-            QMessageBox.information(self, "Export CSV", f"Exported {len(records)} rows to:\n{path}")
+                for r in range(model.rowCount()):
+                    row_vals = []
+                    for c in visible_cols:
+                        val = model.index(r, c).data(Qt.DisplayRole)
+                        row_vals.append("" if val is None else str(val))
+                    writer.writerow(row_vals)
+            QMessageBox.information(self, "Export CSV", f"Exported {model.rowCount()} rows to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export CSV", f"Failed to write CSV:\n{e}")
 
@@ -219,9 +236,14 @@ class MainWindow(QMainWindow):
             )
             return
 
-        records = self._gather_visible_records()
-        if not records:
-            QMessageBox.information(self, "Export XLSX", "No rows to export (check filters/search).")
+        model = self.table.model()
+        if model is None:
+            QMessageBox.information(self, "Export XLSX", "No data to export.")
+            return
+
+        visible_cols = self._visible_columns()
+        if not visible_cols:
+            QMessageBox.information(self, "Export XLSX", "No visible columns to export.")
             return
 
         default_name = str((self.pdf_root / "export.xlsx"))
@@ -229,29 +251,28 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        # Headers from model with newline replaced
         headers_list: list[str] = []
-        src = self.table.model()
-        if isinstance(src, QSortFilterProxyModel):
-            src = src.sourceModel()
-        if src:
-            for c in range(src.columnCount()):
-                h = src.headerData(c, Qt.Horizontal, Qt.DisplayRole) or ""
-                headers_list.append(str(h).replace("\n", " • "))
+        for c in visible_cols:
+            h = model.headerData(c, Qt.Horizontal, Qt.DisplayRole) or ""
+            headers_list.append(str(h).replace("\n", " • "))
 
         try:
             wb = Workbook()
             ws = wb.active
             ws.title = "ISTQB Applications"
             ws.append(headers_list)
-            for r in records:
-                ws.append(r.as_row())
+            for r in range(model.rowCount()):
+                row_vals = []
+                for c in visible_cols:
+                    val = model.index(r, c).data(Qt.DisplayRole)
+                    row_vals.append("" if val is None else str(val))
+                ws.append(row_vals)
             # Auto width
             for col in ws.columns:
                 max_len = max(len(str(c.value)) if c.value is not None else 0 for c in col)
                 ws.column_dimensions[col[0].column_letter].width = min(max(12, max_len + 2), 60)
             wb.save(path)
-            QMessageBox.information(self, "Export XLSX", f"Exported {len(records)} rows to:\n{path}")
+            QMessageBox.information(self, "Export XLSX", f"Exported {model.rowCount()} rows to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export XLSX", f"Failed to write XLSX:\n{e}")
             
@@ -406,11 +427,11 @@ class MainWindow(QMainWindow):
             "Contact details for information exchange\nEmail Address",
             "Contact details for information exchange\nPhone Number",
             "Contact details for information exchange\nPostal Address",
-            "Eligibility Evidence\nSyllabi Integration",
-            "Eligibility Evidence\nCourses/Modules",
-            "Eligibility Evidence\nProof of ISTQB Certifications",
-            "Eligibility Evidence\nUniversity Links",
-            "Eligibility Evidence\nAdditional Info/Documents",
+            "Eligibility Evidence\nSyllabi Integration",    # 11  ← hide
+            "Eligibility Evidence\nCourses/Modules",        # 12  ← hide
+            "Eligibility Evidence\nProof of ISTQB Certifications", # 13 ← hide
+            "Eligibility Evidence\nUniversity Links",       # 14  ← hide
+            "Eligibility Evidence\nAdditional Info/Documents", # 15 ← hide
             "Signature\nSignature Date",
             "File\nFile name",
         ]
@@ -418,7 +439,7 @@ class MainWindow(QMainWindow):
         model = QStandardItemModel(0, len(headers), self)
         model.setHorizontalHeaderLabels(headers)
 
-        # Column groups (cell background colors; indices reflect "No." at col 0)
+        # Colors (as before)
         COLS_APPLICATION = [2]
         COLS_INSTITUTION = [3, 4]
         COLS_RECOG      = [5, 6]
@@ -437,44 +458,39 @@ class MainWindow(QMainWindow):
                     items[c].setBackground(brush)
 
         for rec in self.records:
-            row_vals = rec.as_row()  # 17 columns (without No.)
-            # prepend "No." placeholder (will be renumbered after sort/filter)
+            row_vals = rec.as_row()
             items = [QStandardItem("")] + [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
-
-            # Color groups
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
             paint_group(items, COLS_RECOG,      BRUSH_RECOG)
             paint_group(items, COLS_CONTACT,    BRUSH_CONT)
             paint_group(items, COLS_ELIG,       BRUSH_ELIG)
 
-            # Store full path (hidden) to the last column item for reliable open/export
             FILE_COL = len(headers) - 1
-            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
-
+            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)  # full path hidden in role
             model.appendRow(items)
 
         proxy = RecordsModel(headers, self)
         proxy.setSourceModel(model)
         self.table.setModel(proxy)
 
-        # Centered headers, sizing, sorting
+        # Sizing & sorting
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
-        self.table.sortByColumn(1, Qt.AscendingOrder)  # sort to trigger lessThan
-
-        # Renumber "No." column to reflect current proxy order
+        self.table.sortByColumn(1, Qt.AscendingOrder)
         self._renumber_rows()
-
-        # Connect to renumber on sort/filter changes
         try:
             self.table.model().layoutChanged.connect(self._renumber_rows)
             self.table.model().modelReset.connect(self._renumber_rows)
         except Exception:
             pass
+
+        # HIDE Eligibility columns in Overview
+        for c in (11, 12, 13, 14, 15):
+            self.table.setColumnHidden(c, True)
 
         # Status bar
         try:
@@ -482,7 +498,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # Rebuild FS watchers
         self._rebuild_watch_list()
 
     # ----- Actions -----
