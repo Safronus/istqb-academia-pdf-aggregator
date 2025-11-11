@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
 from .pdf_scanner import PdfScanner, PdfRecord
 from .istqb_boards import KNOWN_BOARDS
 
-
 class RecordsModel(QSortFilterProxyModel):
     def __init__(self, headers: List[str], parent=None):
         super().__init__(parent)
@@ -34,22 +33,50 @@ class RecordsModel(QSortFilterProxyModel):
         model = self.sourceModel()
         if model is None:
             return True
+        # Board filter is based on column 0 (Board)
         idx_board = model.index(source_row, 0, source_parent)
-        idx_all_text = [model.index(source_row, c, source_parent) for c in range(model.columnCount())]
-
-        board_val = model.data(idx_board, Qt.DisplayRole) or ""
+        board_val = (model.data(idx_board, Qt.DisplayRole) or "").strip()
         if self.board_filter != "All" and board_val != self.board_filter:
             return False
 
         if not self.search:
             return True
 
-        # search across all visible columns
-        for idx in idx_all_text:
+        # Search across all columns
+        for c in range(model.columnCount()):
+            idx = model.index(source_row, c, source_parent)
             val = (model.data(idx, Qt.DisplayRole) or "").lower()
             if self.search in val:
                 return True
         return False
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        """Stable multi-key ordering: Board → Application Type → Candidate Name."""
+        model = self.sourceModel()
+        if model is None:
+            return super().lessThan(left, right)
+
+        def data(row: int, col: int) -> str:
+            idx = model.index(row, col)
+            return (model.data(idx, Qt.DisplayRole) or "").strip()
+
+        # Column indices in our Overview layout:
+        BOARD = 0
+        APP = 1
+        CAND = 3
+
+        a_board = data(left.row(), BOARD).lower()
+        b_board = data(right.row(), BOARD).lower()
+
+        # Application Type order map
+        order = {"new application": 0, "additional recognition": 1}
+        a_app = order.get(data(left.row(), APP).lower(), 2)
+        b_app = order.get(data(right.row(), APP).lower(), 2)
+
+        a_cand = data(left.row(), CAND).lower()
+        b_cand = data(right.row(), CAND).lower()
+
+        return (a_board, a_app, a_cand) < (b_board, b_app, b_cand)
 
 
 class MainWindow(QMainWindow):

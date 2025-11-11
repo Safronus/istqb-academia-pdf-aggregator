@@ -4,9 +4,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .pdf_parser import read_pdf_text, read_pdf_form_fields, parse_istqb_academia_application
 from .istqb_boards import KNOWN_BOARDS
-
 
 @dataclass
 class PdfRecord:
@@ -24,7 +22,6 @@ class PdfRecord:
     contact_postal_address: Optional[str]
     signature_date: Optional[str]
     proof_of_istqb_certifications: Optional[str]
-    # New fields (Section 5)
     syllabi_integration_description: Optional[str]
     courses_modules_list: Optional[str]
     university_links: Optional[str]
@@ -32,10 +29,14 @@ class PdfRecord:
     board_known: bool
 
     def as_row(self) -> List[str]:
-        # Overview table remains unchanged intentionally (minimal-change);
-        # we keep Proof short and include file path.
+        # Column order for Overview (grouped):
+        # Board | Application Type | Institution Name | Candidate Name |
+        # Academia Rec | Certified Rec |
+        # Contact: Full | Email | Phone | Postal |
+        # Eligibility: Syllabi | Courses | Proof | Links | Additional |
+        # Signature Date | File
         return [
-            self.board,
+            self.board or "",
             self.application_type or "",
             self.institution_name or "",
             self.candidate_name or "",
@@ -45,8 +46,12 @@ class PdfRecord:
             self.contact_email or "",
             self.contact_phone or "",
             self.contact_postal_address or "",
+            self.syllabi_integration_description or "",
+            self.courses_modules_list or "",
+            self.proof_of_istqb_certifications or "",
+            self.university_links or "",
+            self.additional_information_documents or "",
             self.signature_date or "",
-            (self.proof_of_istqb_certifications or "")[:120].strip(),
             str(self.path),
         ]
 
