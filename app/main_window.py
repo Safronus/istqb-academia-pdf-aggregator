@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
         self._build_browser_tab()
 
         self.rescan()
+        self._init_fs_watcher()
 
     # ----- Menu / actions -----
     def _build_menu(self) -> None:
@@ -127,24 +128,23 @@ class MainWindow(QMainWindow):
         self.menuBar().addAction(about_action)
         
     def _gather_visible_records(self) -> list[PdfRecord]:
-        """Return records corresponding to the currently visible rows in the table."""
         model = self.table.model()
         if model is None:
             return []
         paths: list[str] = []
+        FILE_COL = 16
         if isinstance(model, QSortFilterProxyModel):
             source = model.sourceModel()
             if source is None:
                 return []
             for r in range(model.rowCount()):
-                # Column 12 = File (path)
-                src_idx = model.mapToSource(model.index(r, 12))
-                path_str = source.index(src_idx.row(), 12).data()
+                src_idx = model.mapToSource(model.index(r, FILE_COL))
+                path_str = source.index(src_idx.row(), FILE_COL).data()
                 if path_str:
                     paths.append(str(path_str))
         else:
             for r in range(model.rowCount()):
-                path_str = model.index(r, 12).data()
+                path_str = model.index(r, FILE_COL).data()
                 if path_str:
                     paths.append(str(path_str))
 
@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
             if rec:
                 out.append(rec)
         return out
-    
+
     def export_csv(self) -> None:
         from PySide6.QtWidgets import QFileDialog
         import csv
@@ -169,22 +169,26 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        headers = [
-            "Board", "Application Type", "Institution Name", "Candidate Name",
-            "Recognition Academia", "Recognition Certified",
-            "Contact Name", "Email", "Phone", "Postal Address",
-            "Signature Date", "Proof of ISTQB Certifications", "File"
-        ]
+        # Build headers from the current model (replace newlines for CSV)
+        headers_list: list[str] = []
+        src = self.table.model()
+        if isinstance(src, QSortFilterProxyModel):
+            src = src.sourceModel()
+        if src:
+            for c in range(src.columnCount()):
+                h = src.headerData(c, Qt.Horizontal, Qt.DisplayRole) or ""
+                headers_list.append(str(h).replace("\n", " • "))
+
         try:
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
-                writer.writerow(headers)
+                writer.writerow(headers_list)
                 for r in records:
                     writer.writerow(r.as_row())
             QMessageBox.information(self, "Export CSV", f"Exported {len(records)} rows to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export CSV", f"Failed to write CSV:\n{e}")
-            
+
     def export_xlsx(self) -> None:
         from PySide6.QtWidgets import QFileDialog
         try:
@@ -207,21 +211,24 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        headers = [
-            "Board", "Application Type", "Institution Name", "Candidate Name",
-            "Recognition Academia", "Recognition Certified",
-            "Contact Name", "Email", "Phone", "Postal Address",
-            "Signature Date", "Proof of ISTQB Certifications", "File"
-        ]
+        # Headers from model with newline replaced
+        headers_list: list[str] = []
+        src = self.table.model()
+        if isinstance(src, QSortFilterProxyModel):
+            src = src.sourceModel()
+        if src:
+            for c in range(src.columnCount()):
+                h = src.headerData(c, Qt.Horizontal, Qt.DisplayRole) or ""
+                headers_list.append(str(h).replace("\n", " • "))
 
         try:
             wb = Workbook()
             ws = wb.active
             ws.title = "ISTQB Applications"
-            ws.append(headers)
+            ws.append(headers_list)
             for r in records:
                 ws.append(r.as_row())
-            # Auto width (simple heuristic)
+            # Auto width
             for col in ws.columns:
                 max_len = max(len(str(c.value)) if c.value is not None else 0 for c in col)
                 ws.column_dimensions[col[0].column_letter].width = min(max(12, max_len + 2), 60)
@@ -229,7 +236,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Export XLSX", f"Exported {len(records)} rows to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export XLSX", f"Failed to write XLSX:\n{e}")
-
+            
     def _about(self) -> None:
         QMessageBox.information(
             self, "About",
@@ -270,6 +277,10 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
         self.table.doubleClicked.connect(self.open_selected_pdf)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setMinimumHeight(44)
 
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
@@ -363,17 +374,46 @@ class MainWindow(QMainWindow):
         scanner = PdfScanner(self.pdf_root)
         self.records = scanner.scan()
 
-        # Build table model
-        from PySide6.QtGui import QStandardItemModel, QStandardItem
+        from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
 
         headers = [
-            "Board", "Application Type", "Institution Name", "Candidate Name",
-            "Rec. Academia", "Rec. Certified",
-            "Contact Name", "Email", "Phone", "Postal Address",
-            "Signature Date", "Certifications (short)", "File"
+            "Board",
+            "Application\nApplication Type",
+            "Name of Your Academic Institution\nInstitution Name",
+            "Name of Your Academic Institution\nCandidate Name",
+            "Wished Recognitions\nAcademia Recognition",
+            "Wished Recognitions\nCertified Recognition",
+            "Contact details for information exchange\nFull Name",
+            "Contact details for information exchange\nEmail Address",
+            "Contact details for information exchange\nPhone Number",
+            "Contact details for information exchange\nPostal Address",
+            "Eligibility Evidence\nSyllabi Integration",
+            "Eligibility Evidence\nCourses/Modules",
+            "Eligibility Evidence\nProof of ISTQB Certifications",
+            "Eligibility Evidence\nUniversity Links",
+            "Eligibility Evidence\nAdditional Info/Documents",
+            "Signature\nSignature Date",
+            "File\nFile name",
         ]
+
         model = QStandardItemModel(0, len(headers), self)
         model.setHorizontalHeaderLabels(headers)
+
+        # Header group colors (subtle for dark theme)
+        GROUPS = {
+            # col indices
+            "application": ([1], QColor(70, 88, 120)),
+            "institution": ([2, 3], QColor(90, 70, 120)),
+            "recognitions": ([4, 5], QColor(70, 120, 90)),
+            "contact": ([6, 7, 8, 9], QColor(120, 90, 70)),
+            "eligibility": ([10, 11, 12, 13, 14], QColor(90, 120, 120)),
+        }
+        for cols, color in [(v[0], v[1]) for v in GROUPS.values()]:
+            brush = QBrush(color)
+            for c in cols:
+                model.setHeaderData(c, Qt.Horizontal, brush, Qt.BackgroundRole)
+
+        # Fill rows
         for rec in self.records:
             items = [QStandardItem(cell) for cell in rec.as_row()]
             for it in items:
@@ -383,8 +423,17 @@ class MainWindow(QMainWindow):
         proxy = RecordsModel(headers, self)
         proxy.setSourceModel(model)
         self.table.setModel(proxy)
-        self.table.resizeColumnsToContents()
-        self.table.setColumnHidden(12, False)  # show file path for clarity
+
+        # Resize a bit; allow user to adjust
+        for c in range(len(headers)):
+            self.table.resizeColumnToContents(c)
+
+        # Sort using our multi-key comparator (any column will trigger lessThan);
+        # call sort once to establish order.
+        self.table.sortByColumn(0, Qt.AscendingOrder)
+
+        # (Re)build watchers after successful scan
+        self._rebuild_watch_list()
 
     # ----- Actions -----
     def _selected_record(self) -> Optional[PdfRecord]:
@@ -392,18 +441,71 @@ class MainWindow(QMainWindow):
         if not sel or not sel.hasSelection():
             return None
         index = sel.selectedRows()[0]
-        # Map proxy -> source
         proxy = self.table.model()
+        FILE_COL = 16
         if isinstance(proxy, QSortFilterProxyModel):
             index = proxy.mapToSource(index)
             model = proxy.sourceModel()
         else:
             model = self.table.model()
-        path_str = model.index(index.row(), 12).data()  # File column
+        path_str = model.index(index.row(), FILE_COL).data()
         for r in self.records:
             if str(r.path) == path_str:
                 return r
         return None
+    
+    def _init_fs_watcher(self) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtCore import QFileSystemWatcher
+
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher.directoryChanged.connect(self._on_fs_changed)
+        self._watcher.fileChanged.connect(self._on_fs_changed)
+
+        self._fs_debounce = QTimer(self)
+        self._fs_debounce.setSingleShot(True)
+        self._fs_debounce.setInterval(300)
+        self._fs_debounce.timeout.connect(self._fs_debounced)
+
+        self._rebuild_watch_list()
+
+    def _rebuild_watch_list(self) -> None:
+        """Watch PDF root, all subdirs, and all .pdf files."""
+        if not hasattr(self, "_watcher"):
+            return
+        watcher = self._watcher
+        # Clear
+        try:
+            if watcher.files():
+                watcher.removePaths(watcher.files())
+            if watcher.directories():
+                watcher.removePaths(watcher.directories())
+        except Exception:
+            pass
+
+        dirs = set()
+        files = set()
+        if self.pdf_root.exists():
+            dirs.add(str(self.pdf_root))
+            for p in self.pdf_root.rglob("*"):
+                if p.is_dir():
+                    dirs.add(str(p))
+                elif p.suffix.lower() == ".pdf":
+                    files.add(str(p))
+        if dirs:
+            watcher.addPaths(sorted(dirs))
+        if files:
+            watcher.addPaths(sorted(files))
+
+    def _on_fs_changed(self, _path: str) -> None:
+        # Debounce frequent events
+        if hasattr(self, "_fs_debounce"):
+            self._fs_debounce.start()
+
+    def _fs_debounced(self) -> None:
+        # Rescan and refresh watchers (new subdirs/files)
+        self.rescan()
+        self._rebuild_watch_list()
 
     def open_selected_pdf(self) -> None:
         rec = self._selected_record()

@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator (PySide6)
 
-**Version:** 0.2d — 2025-11-11
+**Version:** 0.3 — 2025-11-11
 
 A macOS-oriented PySide6 GUI app (English UI) that scans a local `PDF/` folder (including subfolders) for ISTQB® Academia Recognition Program application PDFs and aggregates key fields into an overview table. A second tab provides a PDF-focused browser filtered to `.pdf` files only.
 
