@@ -65,8 +65,12 @@ class PdfScanner:
             return "Unknown"
 
     def _parse_one(self, pdf_path: Path) -> PdfRecord:
+        from .pdf_parser import read_pdf_text, read_pdf_form_fields, parse_istqb_academia_application
+
         text = read_pdf_text(pdf_path)
-        fields = parse_istqb_academia_application(text)
+        form_fields = read_pdf_form_fields(pdf_path)
+        fields = parse_istqb_academia_application(text, form_fields=form_fields)
+
         board = self._derive_board(pdf_path)
         return PdfRecord(
             board=board,

@@ -2,35 +2,38 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from pypdf import PdfReader
 
 
-def read_pdf_text(path: Path) -> str:
-    """Read text from a PDF using pypdf. Returns empty string on failure."""
+def read_pdf_form_fields(path: Path) -> Dict[str, Any]:
+    """
+    Return AcroForm fields as a dict using pypdf/PyPDF2 if available.
+    Keys are field names; values are raw field dicts (PyPDF2/pypdf model).
+    If no form or error, returns {}.
+    """
     try:
+        try:
+            from pypdf import PdfReader  # type: ignore
+        except Exception:
+            from PyPDF2 import PdfReader  # type: ignore
         reader = PdfReader(str(path))
-        chunks = []
-        for page in reader.pages:
-            try:
-                chunks.append(page.extract_text() or "")
-            except Exception:
-                pass
-        return "\n".join(chunks)
+        get_fields = getattr(reader, "get_fields", None)
+        if callable(get_fields):
+            fields = get_fields() or {}
+            return fields
     except Exception:
-        return ""
+        pass
+    return {}
 
 
-# Precompiled regex patterns to increase performance and robustness
 RE_KV = re.compile(r"^\s*(?P<k>[A-Za-z \-/()®]+):\s*(?P<v>.*)$")
 RE_EMAIL = re.compile(r"[\w\.-]+@[\w\.-]+\.\w+")
 RE_PHONE = re.compile(r"(?:\+\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{3,4}")
 
 def _take_after(label: str, text: str) -> Optional[str]:
-    """Finds a line starting with 'label' and returns its value after colon."""
     m = re.search(rf"{re.escape(label)}\s*:\s*(.+)", text, flags=re.IGNORECASE)
     return m.group(1).strip() if m else None
-
 
 def _bool_from_checkbox(value: Optional[str]) -> Optional[bool]:
     if value is None:
@@ -42,17 +45,27 @@ def _bool_from_checkbox(value: Optional[str]) -> Optional[bool]:
         return False
     return None
 
+def _pdf_name_to_str(val: object | None) -> Optional[str]:
+    """
+    Convert a PDF Name object like '/New Application' or '/Yes' to plain text.
+    Works with both pypdf and PyPDF2, tolerates plain strings as well.
+    """
+    if val is None:
+        return None
+    s = str(val).strip()
+    if s.startswith("/"):
+        s = s[1:]
+    return s or None
 
-def parse_istqb_academia_application(text: str) -> Dict[str, Optional[str]]:
+def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | None = None) -> Dict[str, Optional[str]]:
     """
     Parse target fields from ISTQB Academia Recognition Program Application PDF text.
-    Returns a dict with typed/simple values where possible.
+    Prefers values from AcroForm (if provided via form_fields), falls back to regex/text heuristics.
     """
-    # Normalize multiple spaces and non-breaking spaces
     norm = text.replace("\xa0", " ")
     lines = [ln.strip() for ln in norm.splitlines() if ln.strip()]
 
-    # Build a quick key->value map for common "Key: Value" pairs seen in exports
+    # Build key-value map for "Key: Value" lines
     kv: Dict[str, str] = {}
     for ln in lines:
         m = RE_KV.match(ln)
@@ -60,39 +73,61 @@ def parse_istqb_academia_application(text: str) -> Dict[str, Optional[str]]:
             k = m.group("k").strip().lower()
             kv[k] = m.group("v").strip()
 
-    # 1) Application Type
-    app_type = (
-        kv.get("application type")
-        or _take_after("Application Type", norm)
-        or ("New Application" if "New Application" in norm and "Additional Recognition" not in norm else None)
-        or ("Additional Recognition" if "Additional Recognition" in norm else None)
-    )
+    # ---------- Prefer AcroForm values where available ----------
+    app_type = None
+    academia = None
+    certified = None
 
-    # 2) Institution name
+    if form_fields:
+        # 1) Application Type as radio (/Btn) with value '/New Application' or '/Additional Recognition'
+        f = form_fields.get("Application Type")
+        if isinstance(f, dict):
+            app_type = _pdf_name_to_str(f.get("/V")) or _pdf_name_to_str(f.get("/DV"))
+
+        # 4) Recognition checkboxes
+        fa = form_fields.get("AcademiaRecognitionCheck")
+        if isinstance(fa, dict):
+            academia = _pdf_name_to_str(fa.get("/V"))
+            academia = "Yes" if academia and academia.lower() == "yes" else ("No" if academia else None)
+
+        fc = form_fields.get("CertifiedRecognitionCheck")
+        if isinstance(fc, dict):
+            certified = _pdf_name_to_str(fc.get("/V"))
+            certified = "Yes" if certified and certified.lower() == "yes" else ("No" if certified else None)
+
+    # ---------- Fallbacks from text (kept pro kompatibilitu) ----------
+    if not app_type:
+        app_type = (
+            kv.get("application type")
+            or _take_after("Application Type", norm)
+            or ("New Application" if "New Application" in norm and "Additional Recognition" not in norm else None)
+            or ("Additional Recognition" if "Additional Recognition" in norm else None)
+        )
+
     institution = (
         kv.get("name of university high or technical school")
         or kv.get("name of your academic institution")
         or _take_after("Name of University, High-, or Technical School", norm)
     )
 
-    # 3) Candidate name
     candidate = kv.get("name of candidate") or _take_after("Name of candidate", norm)
 
-    # 4) Recognition checkboxes (Academia / Certified)
-    academia_raw = (
-        kv.get("academiarecognitioncheck")
-        or kv.get("academia recognition")
-        or _take_after("Academia Recognition", norm)
-    )
-    certified_raw = (
-        kv.get("certifiedrecognitioncheck")
-        or kv.get("certified recognition")
-        or _take_after("Certified Recognition", norm)
-    )
-    academia = _bool_from_checkbox(academia_raw)
-    certified = _bool_from_checkbox(certified_raw)
+    if academia is None:
+        academia_raw = (
+            kv.get("academia recognition")
+            or _take_after("Academia Recognition", norm)
+        )
+        a_bool = _bool_from_checkbox(academia_raw)
+        academia = "Yes" if a_bool is True else ("No" if a_bool is False else None)
 
-    # 5) Contact details
+    if certified is None:
+        certified_raw = (
+            kv.get("certified recognition")
+            or _take_after("Certified Recognition", norm)
+        )
+        c_bool = _bool_from_checkbox(certified_raw)
+        certified = "Yes" if c_bool is True else ("No" if c_bool is False else None)
+
     contact_name = (
         kv.get("contact name")
         or kv.get("full name")
@@ -121,23 +156,20 @@ def parse_istqb_academia_application(text: str) -> Dict[str, Optional[str]]:
         or _take_after("Postal address", norm)
     )
 
-    # 6) Date (signature area)
     signature_date = (
         kv.get("signature date_af_date")
         or kv.get("date")
         or _take_after("Signature Date", norm)
-        or _take_after("Date", norm)  # fall-back; may capture other dates
+        or _take_after("Date", norm)
     )
     if signature_date:
         signature_date = signature_date.strip()
 
-    # 7) Proof of ISTQB certifications (free text, may contain multiple lines)
     proof = (
         kv.get("proof of certifications")
         or kv.get("proof of istqb certifications")
     )
     if not proof:
-        # Fallback: capture block after heading till next blank or heading
         m = re.search(
             r"Proof of ISTQB® certifications.*?:\s*(?P<blk>.+?)(?:\n[A-Z][^\n:]+:|\Z)",
             norm, flags=re.IGNORECASE | re.DOTALL
@@ -145,15 +177,14 @@ def parse_istqb_academia_application(text: str) -> Dict[str, Optional[str]]:
         if m:
             proof = re.sub(r"\s+", " ", m.group("blk")).strip()
 
-    # Additional: URLs block (optional)
     urls = kv.get("university website links") or None
 
     return {
         "application_type": app_type,
         "institution_name": institution,
         "candidate_name": candidate,
-        "recognition_academia": "Yes" if academia is True else ("No" if academia is False else None),
-        "recognition_certified": "Yes" if certified is True else ("No" if certified is False else None),
+        "recognition_academia": academia,
+        "recognition_certified": certified,
         "contact_full_name": contact_name,
         "contact_email": email,
         "contact_phone": phone,
