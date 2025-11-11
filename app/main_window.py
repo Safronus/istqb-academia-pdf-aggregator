@@ -55,25 +55,25 @@ class RecordsModel(QSortFilterProxyModel):
         model = self.sourceModel()
         if model is None:
             return super().lessThan(left, right)
-
+    
         def data(row: int, col: int) -> str:
             idx = model.index(row, col)
             return (model.data(idx, Qt.DisplayRole) or "").strip()
-
+    
         BOARD = 0
         APP   = 1
         CAND  = 3
-
+    
         a_board = data(left.row(), BOARD).lower()
         b_board = data(right.row(), BOARD).lower()
-
+    
         order = {"new application": 0, "additional recognition": 1}
         a_app = order.get(data(left.row(), APP).lower(), 2)
         b_app = order.get(data(right.row(), APP).lower(), 2)
-
+    
         a_cand = data(left.row(), CAND).lower()
         b_cand = data(right.row(), CAND).lower()
-
+    
         return (a_board, a_app, a_cand) < (b_board, b_app, b_cand)
 
 class MainWindow(QMainWindow):
@@ -410,10 +410,20 @@ class MainWindow(QMainWindow):
     # ----- Data -----
     def rescan(self) -> None:
         scanner = PdfScanner(self.pdf_root)
+    
+        # Diagnostika: kolik PDF souborů existuje v kořeni (bez parsování)
+        try:
+            found = 0
+            for p in self.pdf_root.rglob("*"):
+                if p.is_file() and p.suffix.lower() == ".pdf":
+                    found += 1
+        except Exception:
+            found = -1  # nešlo spočítat (např. neexistující cesta)
+    
         self.records = scanner.scan()
-
+    
         from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
-
+    
         headers = [
             "Board",
             "Application\nApplication Type",
@@ -433,64 +443,66 @@ class MainWindow(QMainWindow):
             "Signature\nSignature Date",
             "File\nFile name",
         ]
-
+    
         model = QStandardItemModel(0, len(headers), self)
         model.setHorizontalHeaderLabels(headers)
-
-        # Barevné skupiny (bez číslování; indexy dle headers výše)
+    
+        # Barevné skupiny
         COLS_APPLICATION = [1]
         COLS_INSTITUTION = [2, 3]
         COLS_RECOG      = [4, 5]
         COLS_CONTACT    = [6, 7, 8, 9]
         COLS_ELIG       = [10, 11, 12, 13, 14]
-
+    
         BRUSH_APP   = QBrush(QColor(58, 74, 110))
         BRUSH_INST  = QBrush(QColor(74, 58, 110))
         BRUSH_RECOG = QBrush(QColor(58, 110, 82))
         BRUSH_CONT  = QBrush(QColor(110, 82, 58))
         BRUSH_ELIG  = QBrush(QColor(72, 110, 110))
-
+    
         def paint_group(items: list[QStandardItem], cols: list[int], brush: QBrush) -> None:
             for c in cols:
                 if 0 <= c < len(items):
                     items[c].setBackground(brush)
-
+    
         for rec in self.records:
-            row_vals = rec.as_row()
+            row_vals = rec.as_row()  # délka 17
             items = [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
+    
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
             paint_group(items, COLS_RECOG,      BRUSH_RECOG)
             paint_group(items, COLS_CONTACT,    BRUSH_CONT)
             paint_group(items, COLS_ELIG,       BRUSH_ELIG)
-
+    
             FILE_COL = len(headers) - 1
             items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)  # schovaná plná cesta
             model.appendRow(items)
-
+    
         proxy = RecordsModel(headers, self)
         proxy.setSourceModel(model)
         self.table.setModel(proxy)
-
+    
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
-
+    
         # Výchozí řazení: Board
         self.table.sortByColumn(0, Qt.AscendingOrder)
-
-        # Skryj Eligibility sloupce
+    
+        # Skryj Eligibility sloupce v Overview
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
-
-        # Stav
+    
+        # Stav – kolik PDF nalezeno a kolik naparsováno
         try:
-            self.statusBar().showMessage(f"{len(self.records)} PDF parsed • Root: {self.pdf_root}")
+            msg = f"PDF found: {found if found >= 0 else 'n/a'} • Parsed: {len(self.records)} • Root: {self.pdf_root}"
+            self.statusBar().showMessage(msg)
         except Exception:
             pass
-
+    
         self._rebuild_watch_list()
 
     # ----- Actions -----

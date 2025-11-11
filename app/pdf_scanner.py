@@ -118,10 +118,10 @@ class PdfScanner:
         contact_phone = fval("phone") or ""
         contact_addr  = fval("postal address") or ""
 
-        # Signature date – klíčová část: form fields → text; vždy YYYY-MM-DD
+        # Signature date – z polí / z textu → vždy YYYY-MM-DD
         sig_iso = guess_signature_date(fields, text) or ""
 
-        # Eligibility (sekce 5) – načítáme, ale v Overview skryjeme
+        # Eligibility (sekce 5) – Overview skryté, v PDF Browseru viditelné
         syllabi_desc = fval("syllabi", "integrated") or ""
         courses_list = fval("courses/modules", "courses and modules", "courses") or ""
         proof_cert   = fval("proof of istqb", "proof of certifications") or ""
