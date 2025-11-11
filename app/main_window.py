@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         vleft = QVBoxLayout(left)
         self.fs_model = QFileSystemModel(self)
         self.fs_model.setRootPath(str(self.pdf_root))
-        self.fs_model.setNameFilterDisables(False)  # hide non-matching files
+        self.fs_model.setNameFilterDisables(False)
         self.fs_model.setNameFilters(["*.pdf", "*.PDF"])
 
         self.tree = QTreeView()
@@ -297,7 +297,11 @@ class MainWindow(QMainWindow):
         self.lbl_phone = QLabel("-")
         self.lbl_postal = QLabel("-")
         self.lbl_date = QLabel("-")
+        self.lbl_syllabi = QLabel("-")
+        self.lbl_courses = QLabel("-")
         self.lbl_proof = QLabel("-")
+        self.lbl_links = QLabel("-")
+        self.lbl_additional = QLabel("-")
         self.btn_open_right = QPushButton("Open PDF")
         self.btn_open_right.clicked.connect(self._open_selected_detail)
 
@@ -313,7 +317,11 @@ class MainWindow(QMainWindow):
         self.detail_form.addRow("Phone:", self.lbl_phone)
         self.detail_form.addRow("Postal Address:", self.lbl_postal)
         self.detail_form.addRow("Signature Date:", self.lbl_date)
+        self.detail_form.addRow("Syllabi Integration:", self.lbl_syllabi)
+        self.detail_form.addRow("Courses/Modules:", self.lbl_courses)
         self.detail_form.addRow("Proof of ISTQB Certifications:", self.lbl_proof)
+        self.detail_form.addRow("University Links:", self.lbl_links)
+        self.detail_form.addRow("Additional Info/Documents:", self.lbl_additional)
         vright.addLayout(self.detail_form)
         vright.addStretch(1)
         vright.addWidget(self.btn_open_right)
@@ -412,19 +420,13 @@ class MainWindow(QMainWindow):
 
     def _update_detail_panel(self, rec: Optional[PdfRecord]) -> None:
         if rec is None:
-            self.lbl_board.setText("-")
-            self.lbl_known.setText("-")
-            self.lbl_app_type.setText("-")
-            self.lbl_inst.setText("-")
-            self.lbl_cand.setText("-")
-            self.lbl_acad.setText("-")
-            self.lbl_cert.setText("-")
-            self.lbl_contact.setText("-")
-            self.lbl_email.setText("-")
-            self.lbl_phone.setText("-")
-            self.lbl_postal.setText("-")
-            self.lbl_date.setText("-")
-            self.lbl_proof.setText("-")
+            for lbl in (
+                self.lbl_board, self.lbl_known, self.lbl_app_type, self.lbl_inst, self.lbl_cand,
+                self.lbl_acad, self.lbl_cert, self.lbl_contact, self.lbl_email, self.lbl_phone,
+                self.lbl_postal, self.lbl_date, self.lbl_syllabi, self.lbl_courses,
+                self.lbl_proof, self.lbl_links, self.lbl_additional
+            ):
+                lbl.setText("-")
             return
 
         self.lbl_board.setText(rec.board)
@@ -439,4 +441,8 @@ class MainWindow(QMainWindow):
         self.lbl_phone.setText(rec.contact_phone or "")
         self.lbl_postal.setText(rec.contact_postal_address or "")
         self.lbl_date.setText(rec.signature_date or "")
+        self.lbl_syllabi.setText(rec.syllabi_integration_description or "")
+        self.lbl_courses.setText(rec.courses_modules_list or "")
         self.lbl_proof.setText(rec.proof_of_istqb_certifications or "")
+        self.lbl_links.setText(rec.university_links or "")
+        self.lbl_additional.setText(rec.additional_information_documents or "")

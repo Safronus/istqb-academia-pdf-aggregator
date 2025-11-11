@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator (PySide6)
 
-**Version:** 0.2 — 2025-11-11
+**Version:** 0.2d — 2025-11-11
 
 A macOS-oriented PySide6 GUI app (English UI) that scans a local `PDF/` folder (including subfolders) for ISTQB® Academia Recognition Program application PDFs and aggregates key fields into an overview table. A second tab provides a PDF-focused browser filtered to `.pdf` files only.
 
@@ -167,3 +167,14 @@ Changed: **CaSTB ➜ CaSQB (Czech and Slovak Quality Board)**.
 ## License
 
 © 2025. Provided as-is. ISTQB® is a registered trademark of its respective owner.
+
+
+### 0.2d — 2025-11-11
+- **Fix:** Read **Signature Date** from Section 6 *Declaration and Consent* field (`Signature Date_af_date`) instead of generic "Date" heuristics.
+- **Feature:** Parse Section 5 *Eligibility Evidence* fields from AcroForm text fields:
+  1) *Description of how ISTQB syllabi are integrated in the curriculum* (field name: `Descriptino of how syllabi are integrated`),
+  2) *List of courses/modules* (`List of courses and modules`),
+  3) *Proof of ISTQB certifications (if any)* (`Proof of certifications`),
+  4) *University website links (if any)* (`University website links`),
+  5) *Any additional relevant information or documents (if any)* (`Additional relevant information or documents`).
+- UI detail panel shows these fields.

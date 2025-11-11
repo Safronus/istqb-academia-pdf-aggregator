@@ -76,8 +76,8 @@ def _pdf_text_value(field: dict | None) -> Optional[str]:
 
 def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | None = None) -> Dict[str, Optional[str]]:
     """
-    Parse target fields from ISTQB Academia Application PDF.
-    Prefers AcroForm values (radio/checkbox/text) via form_fields and falls back to text heuristics.
+    Parse ISTQB Academia Application PDF.
+    Prefers AcroForm (form_fields) and falls back to text heuristics.
     """
     norm = text.replace("\xa0", " ")
     lines = [ln.strip() for ln in norm.splitlines() if ln.strip()]
@@ -89,7 +89,7 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
             k = m.group("k").strip().lower()
             kv[k] = m.group("v").strip()
 
-    # ---------- Prefer AcroForm values ----------
+    # ---------- Prefer AcroForm ----------
     app_type = None
     academia = None
     certified = None
@@ -100,6 +100,12 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
     email = None
     phone = None
     postal = None
+    signature_date = None
+
+    syllabi_desc = None
+    courses_modules = None
+    proof = None
+    additional = None
 
     if form_fields:
         # Application type (radio)
@@ -107,27 +113,35 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
         if isinstance(f_app, dict):
             app_type = _pdf_name_to_str(f_app.get("/V")) or _pdf_name_to_str(f_app.get("/DV"))
 
-        # Institution / Candidate (Section 2)
+        # Section 2
         institution = _pdf_text_value(form_fields.get("Name of University High or Technical School")) or institution
         candidate = _pdf_text_value(form_fields.get("Name of candidate")) or candidate
-        urls = _pdf_text_value(form_fields.get("University website links")) or urls
 
         # Recognition (checkboxes)
         fa = form_fields.get("AcademiaRecognitionCheck")
         if isinstance(fa, dict):
             v = _pdf_name_to_str(fa.get("/V"))
             academia = "Yes" if v and v.lower() == "yes" else ("No" if v else None)
-
         fc = form_fields.get("CertifiedRecognitionCheck")
         if isinstance(fc, dict):
             v = _pdf_name_to_str(fc.get("/V"))
             certified = "Yes" if v and v.lower() == "yes" else ("No" if v else None)
 
-        # ---- Contact details (Section 4) ----
+        # Section 4 – Contact details
         contact_name = _pdf_text_value(form_fields.get("Contact name")) or contact_name
         email = _pdf_text_value(form_fields.get("Contact email")) or email
         phone = _pdf_text_value(form_fields.get("Contact phone")) or phone
         postal = _pdf_text_value(form_fields.get("Postal address")) or postal
+
+        # Section 5 – Eligibility Evidence
+        syllabi_desc = _pdf_text_value(form_fields.get("Descriptino of how syllabi are integrated")) or syllabi_desc
+        courses_modules = _pdf_text_value(form_fields.get("List of courses and modules")) or courses_modules
+        proof = _pdf_text_value(form_fields.get("Proof of certifications")) or proof
+        urls = _pdf_text_value(form_fields.get("University website links")) or urls
+        additional = _pdf_text_value(form_fields.get("Additional relevant information or documents")) or additional
+
+        # Section 6 – Signature date
+        signature_date = _pdf_text_value(form_fields.get("Signature Date_af_date")) or signature_date
 
     # ---------- Fallbacks from text ----------
     if not app_type:
@@ -149,13 +163,13 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
         candidate = kv.get("name of candidate") or _take_after("Name of candidate", norm)
 
     if academia is None:
-        academia_raw = kv.get("academia recognition") or _take_after("Academia Recognition", norm)
-        a_bool = _bool_from_checkbox(academia_raw)
+        a = kv.get("academia recognition") or _take_after("Academia Recognition", norm)
+        a_bool = _bool_from_checkbox(a)
         academia = "Yes" if a_bool is True else ("No" if a_bool is False else None)
 
     if certified is None:
-        certified_raw = kv.get("certified recognition") or _take_after("Certified Recognition", norm)
-        c_bool = _bool_from_checkbox(certified_raw)
+        c = kv.get("certified recognition") or _take_after("Certified Recognition", norm)
+        c_bool = _bool_from_checkbox(c)
         certified = "Yes" if c_bool is True else ("No" if c_bool is False else None)
 
     if contact_name is None:
@@ -176,24 +190,36 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
     if postal is None:
         postal = kv.get("postal address") or _take_after("Postal address", norm)
 
-    signature_date = (
-        kv.get("signature date_af_date")
-        or kv.get("date")
-        or _take_after("Signature Date", norm)
-        or _take_after("Date", norm)
-    )
-    if signature_date:
-        signature_date = signature_date.strip()
-
-    # Proof of certifications (optional)
-    proof = kv.get("proof of certifications") or kv.get("proof of istqb certifications")
-    if not proof:
-        m = re.search(
-            r"Proof of ISTQB® certifications.*?:\s*(?P<blk>.+?)(?:\n[A-Z][^\n:]+:|\Z)",
-            norm, flags=re.IGNORECASE | re.DOTALL
+    if signature_date is None:
+        signature_date = (
+            kv.get("signature date_af_date")
+            or kv.get("date")
+            or _take_after("Signature Date", norm)
+            or _take_after("Date", norm)
         )
-        if m:
-            proof = re.sub(r"\s+", " ", m.group("blk")).strip()
+        if signature_date:
+            signature_date = signature_date.strip()
+
+    if proof is None:
+        proof = kv.get("proof of certifications") or kv.get("proof of istqb certifications")
+        if not proof:
+            m = re.search(
+                r"Proof of ISTQB® certifications.*?:\s*(?P<blk>.+?)(?:\n[A-Z][^\n:]+:|\Z)",
+                norm, flags=re.IGNORECASE | re.DOTALL
+            )
+            if m:
+                proof = re.sub(r"\s+", " ", m.group("blk")).strip()
+
+    if urls is None:
+        urls = kv.get("university website links") or None
+
+    # Reasonable fallbacks for syllabi_desc / courses_modules / additional
+    if syllabi_desc is None:
+        syllabi_desc = _take_after("Description of how ISTQB syllabi are integrated in the curriculum", norm)
+    if courses_modules is None:
+        courses_modules = _take_after("List of courses/modules", norm)
+    if additional is None:
+        additional = _take_after("Any additional relevant information or documents", norm)
 
     return {
         "application_type": app_type,
@@ -208,4 +234,7 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
         "signature_date": signature_date,
         "proof_of_istqb_certifications": proof,
         "university_links": urls,
+        "syllabi_integration_description": syllabi_desc,
+        "courses_modules_list": courses_modules,
+        "additional_information_documents": additional,
     }

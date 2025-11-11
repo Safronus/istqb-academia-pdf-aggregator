@@ -4,7 +4,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .pdf_parser import read_pdf_text, parse_istqb_academia_application
+from .pdf_parser import read_pdf_text, read_pdf_form_fields, parse_istqb_academia_application
 from .istqb_boards import KNOWN_BOARDS
 
 
@@ -24,9 +24,16 @@ class PdfRecord:
     contact_postal_address: Optional[str]
     signature_date: Optional[str]
     proof_of_istqb_certifications: Optional[str]
+    # New fields (Section 5)
+    syllabi_integration_description: Optional[str]
+    courses_modules_list: Optional[str]
+    university_links: Optional[str]
+    additional_information_documents: Optional[str]
     board_known: bool
 
     def as_row(self) -> List[str]:
+        # Overview table remains unchanged intentionally (minimal-change);
+        # we keep Proof short and include file path.
         return [
             self.board,
             self.application_type or "",
@@ -54,7 +61,6 @@ class PdfScanner:
         self.root = root
 
     def _derive_board(self, pdf_path: Path) -> str:
-        """Assume immediate subfolder under root is board; fallback to 'Unknown'."""
         try:
             rel = pdf_path.relative_to(self.root)
             parts = rel.parts
@@ -65,12 +71,9 @@ class PdfScanner:
             return "Unknown"
 
     def _parse_one(self, pdf_path: Path) -> PdfRecord:
-        from .pdf_parser import read_pdf_text, read_pdf_form_fields, parse_istqb_academia_application
-
         text = read_pdf_text(pdf_path)
         form_fields = read_pdf_form_fields(pdf_path)
         fields = parse_istqb_academia_application(text, form_fields=form_fields)
-
         board = self._derive_board(pdf_path)
         return PdfRecord(
             board=board,
@@ -87,11 +90,14 @@ class PdfScanner:
             contact_postal_address=fields.get("contact_postal_address"),
             signature_date=fields.get("signature_date"),
             proof_of_istqb_certifications=fields.get("proof_of_istqb_certifications"),
+            syllabi_integration_description=fields.get("syllabi_integration_description"),
+            courses_modules_list=fields.get("courses_modules_list"),
+            university_links=fields.get("university_links"),
+            additional_information_documents=fields.get("additional_information_documents"),
             board_known=board in KNOWN_BOARDS,
         )
 
     def scan(self) -> List[PdfRecord]:
-        """Recursively find all .pdf under root and parse records."""
         records: List[PdfRecord] = []
         if not self.root.exists():
             return records
@@ -101,7 +107,6 @@ class PdfScanner:
             try:
                 records.append(self._parse_one(path))
             except Exception:
-                # Parse errors should not break the whole scan; add minimal record.
                 board = self._derive_board(path)
                 records.append(
                     PdfRecord(
@@ -119,6 +124,10 @@ class PdfScanner:
                         contact_postal_address=None,
                         signature_date=None,
                         proof_of_istqb_certifications=None,
+                        syllabi_integration_description=None,
+                        courses_modules_list=None,
+                        university_links=None,
+                        additional_information_documents=None,
                         board_known=board in KNOWN_BOARDS,
                     )
                 )
