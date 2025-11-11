@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .pdf_parser import read_pdf_text, read_pdf_form_fields, parse_istqb_academia_application
 from .istqb_boards import KNOWN_BOARDS
 
 @dataclass
@@ -103,11 +104,17 @@ class PdfScanner:
         )
 
     def scan(self) -> List[PdfRecord]:
+        """Recursively find all PDF files under root and parse records.
+        Case-insensitive handling of '.pdf' vs '.PDF' etc.
+        """
         records: List[PdfRecord] = []
         if not self.root.exists():
             return records
-        for path in self.root.rglob("*.pdf"):
+
+        for path in self.root.rglob("*"):
             if not path.is_file():
+                continue
+            if path.suffix.lower() != ".pdf":
                 continue
             try:
                 records.append(self._parse_one(path))

@@ -399,40 +399,54 @@ class MainWindow(QMainWindow):
         model = QStandardItemModel(0, len(headers), self)
         model.setHorizontalHeaderLabels(headers)
 
-        # Header group colors (subtle for dark theme)
-        GROUPS = {
-            # col indices
-            "application": ([1], QColor(70, 88, 120)),
-            "institution": ([2, 3], QColor(90, 70, 120)),
-            "recognitions": ([4, 5], QColor(70, 120, 90)),
-            "contact": ([6, 7, 8, 9], QColor(120, 90, 70)),
-            "eligibility": ([10, 11, 12, 13, 14], QColor(90, 120, 120)),
-        }
-        for cols, color in [(v[0], v[1]) for v in GROUPS.values()]:
-            brush = QBrush(color)
-            for c in cols:
-                model.setHeaderData(c, Qt.Horizontal, brush, Qt.BackgroundRole)
+        # Barevné skupiny (jemné odstíny pro dark theme)
+        COLS_APPLICATION = [1]
+        COLS_INSTITUTION = [2, 3]
+        COLS_RECOG      = [4, 5]
+        COLS_CONTACT    = [6, 7, 8, 9]
+        COLS_ELIG       = [10, 11, 12, 13, 14]
+        # barvy skupin buněk
+        BRUSH_APP   = QBrush(QColor(58, 74, 110))
+        BRUSH_INST  = QBrush(QColor(74, 58, 110))
+        BRUSH_RECOG = QBrush(QColor(58, 110, 82))
+        BRUSH_CONT  = QBrush(QColor(110, 82, 58))
+        BRUSH_ELIG  = QBrush(QColor(72, 110, 110))
 
-        # Fill rows
+        def paint_group(items: list[QStandardItem], cols: list[int], brush: QBrush) -> None:
+            for c in cols:
+                if 0 <= c < len(items):
+                    items[c].setBackground(brush)
+
+        # Naplnění řádků + barvy buněk
         for rec in self.records:
-            items = [QStandardItem(cell) for cell in rec.as_row()]
+            row_vals = rec.as_row()
+            items = [QStandardItem(val) for val in row_vals]
             for it in items:
                 it.setEditable(False)
+            # obarvit skupiny
+            paint_group(items, COLS_APPLICATION, BRUSH_APP)
+            paint_group(items, COLS_INSTITUTION, BRUSH_INST)
+            paint_group(items, COLS_RECOG,      BRUSH_RECOG)
+            paint_group(items, COLS_CONTACT,    BRUSH_CONT)
+            paint_group(items, COLS_ELIG,       BRUSH_ELIG)
             model.appendRow(items)
 
         proxy = RecordsModel(headers, self)
         proxy.setSourceModel(model)
         self.table.setModel(proxy)
 
-        # Resize a bit; allow user to adjust
+        # Přizpůsobení šířek, zapnutí řazení
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
-
-        # Sort using our multi-key comparator (any column will trigger lessThan);
-        # call sort once to establish order.
         self.table.sortByColumn(0, Qt.AscendingOrder)
 
-        # (Re)build watchers after successful scan
+        # Stav do status baru (počet souborů a sledovaná složka)
+        try:
+            self.statusBar().showMessage(f"{len(self.records)} PDF parsed • Root: {self.pdf_root}")
+        except Exception:
+            pass
+
+        # (Re)build watchers po úspěšném scan-u
         self._rebuild_watch_list()
 
     # ----- Actions -----
