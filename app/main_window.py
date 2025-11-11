@@ -414,12 +414,10 @@ class MainWindow(QMainWindow):
         candidates = []
         if isinstance(getattr(self, "pdf_root", None), Path):
             candidates.append(self.pdf_root)
-        # adresář, kde leží tento soubor (app/)
         try:
             candidates.append(Path(__file__).resolve().parent.parent / "PDF")
         except Exception:
             pass
-        # aktuální pracovní adresář
         try:
             candidates.append(Path.cwd() / "PDF")
         except Exception:
@@ -439,10 +437,18 @@ class MainWindow(QMainWindow):
         if chosen is not None and chosen != getattr(self, "pdf_root", None):
             self.pdf_root = chosen
     
-        # --- 2) Diagnostika počtu nalezených PDF (bez parsování) ---
+        # --- 2) Diagnostika počtu nalezených PDF (bez parsování) + IGNORE __archive__ ---
         try:
-            found = sum(1 for p in self.pdf_root.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf") \
-                    if isinstance(self.pdf_root, Path) else 0
+            found = 0
+            if isinstance(self.pdf_root, Path):
+                for p in self.pdf_root.rglob("*"):
+                    if p.is_file() and p.suffix.lower() == ".pdf":
+                        rel = p.relative_to(self.pdf_root)
+                        if "__archive__" in rel.parts:
+                            continue
+                        found += 1
+            else:
+                found = 0
         except Exception:
             found = 0
     
@@ -451,7 +457,8 @@ class MainWindow(QMainWindow):
         self.records = scanner.scan() if scanner else []
     
         # --- 4) Naplnění modelu ---
-        from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
+        from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor, QIcon
+        from PySide6.QtWidgets import QStyle
     
         headers = [
             "Board",
@@ -489,24 +496,41 @@ class MainWindow(QMainWindow):
         BRUSH_CONT  = QBrush(QColor(110, 82, 58))
         BRUSH_ELIG  = QBrush(QColor(72, 110, 110))
     
+        icon_yes = self.style().standardIcon(QStyle.SP_DialogApplyButton)
+        icon_no  = self.style().standardIcon(QStyle.SP_DialogCancelButton)
+    
         def paint_group(items: list[QStandardItem], cols: list[int], brush: QBrush) -> None:
             for c in cols:
                 if 0 <= c < len(items):
                     items[c].setBackground(brush)
+    
+        def set_yesno_icon(item: QStandardItem) -> None:
+            val = (item.text() or "").strip().lower()
+            if val in {"yes", "on", "true", "1", "checked"}:
+                item.setIcon(icon_yes)
+            else:
+                item.setIcon(icon_no)
     
         for rec in self.records:
             row_vals = rec.as_row()  # 17 prvků
             items = [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
+    
+            # Barvy skupin
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
             paint_group(items, COLS_RECOG,      BRUSH_RECOG)
             paint_group(items, COLS_CONTACT,    BRUSH_CONT)
             paint_group(items, COLS_ELIG,       BRUSH_ELIG)
     
+            # Ikony do sloupců "Wished Recognitions"
+            set_yesno_icon(items[4])  # Academia
+            set_yesno_icon(items[5])  # Certified
+    
+            # Skrytá plná cesta v posledním sloupci
             FILE_COL = len(headers) - 1
-            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)  # schovaná plná cesta
+            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
             model.appendRow(items)
     
         proxy = RecordsModel(headers, self)
@@ -517,14 +541,20 @@ class MainWindow(QMainWindow):
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
     
-        # Výchozí řazení: Board → (RecordsModel.lessThan dodrží multiklíč)
+        # Skryj vertikální číslování řádků (row header)
+        try:
+            self.table.verticalHeader().setVisible(False)
+        except Exception:
+            pass
+    
+        # Výchozí řazení: Board
         self.table.sortByColumn(0, Qt.AscendingOrder)
     
         # Skryj Eligibility sloupce v Overview
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # Stav – kolik PDF nalezeno a kolik naparsováno + jaký root se použil
+        # Stav – found/parsed/root (found bez __archive__)
         try:
             root_str = str(self.pdf_root) if isinstance(self.pdf_root, Path) else "<unset>"
             self.statusBar().showMessage(f"PDF found: {found} • Parsed: {len(self.records)} • Root: {root_str}")

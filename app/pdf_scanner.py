@@ -103,14 +103,22 @@ class PdfScanner:
         candidate = fval("name of candidate") or ""
 
         # Recognitions (sekce 3)
-        recog_acad = fval("academiarecognitioncheck") or fval("academia recognition") or ""
-        recog_cert = fval("certifiedrecognitioncheck") or fval("certified recognition") or ""
-        # Normalizace přepínačů Ano/Off → Yes/No
-        def norm_check(s: str) -> str:
-            s = s.strip().lower()
-            return "Yes" if s in ("yes", "on", "true", "1", "checked") else ("No" if s in ("no", "off", "false", "0") else s or "")
-        recog_acad = norm_check(recog_acad)
-        recog_cert = norm_check(recog_cert)
+        def checkbox_truthy(val: object) -> bool:
+            if val is None:
+                return False
+            s = str(val).strip().lower()
+            # běžné návraty z pdf: '/yes', '/off', 'on', 'off', 'true', 'false', '1', '0', 'checked'
+            return s in {"yes", "/yes", "on", "true", "1", "checked", "selected"}
+
+        # vezmi první nalezenou hodnotu ve form fields
+        raw_acad = fval("academiarecognitioncheck", "academia recognition", "academia_recognition")
+        raw_cert = fval("certifiedrecognitioncheck", "certified recognition", "certified_recognition")
+
+        acad_yes = checkbox_truthy(raw_acad)
+        cert_yes = checkbox_truthy(raw_cert)
+
+        recog_acad = "Yes" if acad_yes else "No"
+        recog_cert = "Yes" if cert_yes else "No"
 
         # Contacts (sekce 4)
         contact_name  = fval("full name", "contact name") or ""
@@ -152,43 +160,28 @@ class PdfScanner:
         )
 
     def scan(self) -> List[PdfRecord]:
-        """Recursively find all PDF files under root and parse records.
-        Case-insensitive handling of '.pdf' vs '.PDF' etc.
-        """
         records: List[PdfRecord] = []
-        if not self.root.exists():
+        if self.root is None or not self.root.exists():
             return records
-
+    
+        # Projdeme všechny PDF (case-insensitive), ale IGNORUJEME podsložky "__archive__"
         for path in self.root.rglob("*"):
-            if not path.is_file():
-                continue
-            if path.suffix.lower() != ".pdf":
-                continue
             try:
-                records.append(self._parse_one(path))
+                if not path.is_file():
+                    continue
+                if path.suffix.lower() != ".pdf":
+                    continue
+                rel = path.relative_to(self.root)
+                if "__archive__" in rel.parts:
+                    continue
             except Exception:
-                board = self._derive_board(path)
-                records.append(
-                    PdfRecord(
-                        board=board,
-                        path=path,
-                        size_bytes=path.stat().st_size,
-                        application_type=None,
-                        institution_name=None,
-                        candidate_name=None,
-                        recognition_academia=None,
-                        recognition_certified=None,
-                        contact_full_name=None,
-                        contact_email=None,
-                        contact_phone=None,
-                        contact_postal_address=None,
-                        signature_date=None,
-                        proof_of_istqb_certifications=None,
-                        syllabi_integration_description=None,
-                        courses_modules_list=None,
-                        university_links=None,
-                        additional_information_documents=None,
-                        board_known=board in KNOWN_BOARDS,
-                    )
-                )
+                continue
+    
+            try:
+                rec = self._parse_one(path)
+                records.append(rec)
+            except Exception:
+                # tiché přeskočení, abychom nezastavili sken
+                continue
+    
         return records
