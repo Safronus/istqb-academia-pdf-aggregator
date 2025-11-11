@@ -90,103 +90,68 @@ def read_pdf_form_fields(path: Path) -> dict:
     return {}
 
 # --- Signature Date normalizace ---
-_MONTHS = {
-    "january":1, "jan":1, "february":2, "feb":2, "march":3, "mar":3, "april":4, "apr":4,
-    "may":5, "june":6, "jun":6, "july":7, "jul":7, "august":8, "aug":8, "september":9, "sep":9, "sept":9,
-    "october":10, "oct":10, "november":11, "nov":11, "december":12, "dec":12
-}
+# ... importy výše ...
+_MONTHS = {"january":1,"jan":1,"february":2,"feb":2,"march":3,"mar":3,"april":4,"apr":4,
+           "may":5,"june":6,"jun":6,"july":7,"jul":7,"august":8,"aug":8,"september":9,"sep":9,"sept":9,
+           "october":10,"oct":10,"november":11,"nov":11,"december":12,"dec":12}
 
 def normalize_signature_date(raw: str | None) -> str | None:
-    """
-    Převede různé varianty data na YYYY-MM-DD (např. 28/09/2025, 2025.8.19, 21st August, 2025).
-    Vrací None, když nerozpozná.
-    """
-    if not raw:
-        return None
+    import re
+    if not raw: return None
     s = raw.strip()
-    if not s:
-        return None
-    s = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", s, flags=re.IGNORECASE)  # 21st -> 21
+    if not s: return None
+    s = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", s, flags=re.IGNORECASE)  # 21st→21
     s = re.sub(r"[,\u3000]+", " ", s).strip()
 
-    def _mk(y: int, m: int, d: int) -> str | None:
-        if 1 <= m <= 12 and 1 <= d <= 31 and 1900 <= y <= 2100:
+    def _mk(y,m,d):
+        if 1<=m<=12 and 1<=d<=31 and 1900<=y<=2100:
             return f"{y:04d}-{m:02d}-{d:02d}"
         return None
 
-    # YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
     m = re.match(r"^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$", s)
-    if m:
-        y, mm, dd = map(int, m.groups())
-        return _mk(y, mm, dd)
+    if m: y,mm,d = map(int,m.groups()); return _mk(y,mm,d)
 
-    # D.M.YYYY / D-M-YYYY / D/M/YYYY (preferujeme D/M/Y)
-    m = re.match(r"^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$", s)
-    if m:
-        d, mm, y = map(int, m.groups())
-        return _mk(y, mm, d)
+    m = re.match(r"^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$", s)  # d/m/y
+    if m: d,mm,y = map(int,m.groups()); return _mk(y,mm,d)
 
-    # 21 August 2025 / August 21 2025 / s čárkami
     m = re.match(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$", s)
     if m:
-        d, mon, y = m.groups()
-        mm = _MONTHS.get(mon.lower())
+        d,mon,y = m.groups(); mm=_MONTHS.get(mon.lower()); 
         if mm: return _mk(int(y), mm, int(d))
     m = re.match(r"^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$", s)
     if m:
-        mon, d, y = m.groups()
-        mm = _MONTHS.get(mon.lower())
+        mon,d,y = m.groups(); mm=_MONTHS.get(mon.lower()); 
         if mm: return _mk(int(y), mm, int(d))
 
-    # YYYY M D (mezery)
     m = re.match(r"^(\d{4})\s+(\d{1,2})\s+(\d{1,2})$", s)
-    if m:
-        y, mm, d = map(int, m.groups())
-        return _mk(y, mm, d)
-
+    if m: y,mm,d = map(int,m.groups()); return _mk(y,mm,d)
     return None
 
-# kandidátní klíče pro form fields (různé varianty)
-_SIG_DATE_CAND_KEYS = (
-    "signature date", "date", "signature_date", "signature date_af_date",
-    "signature_af_date", "signature", "signed on"
-)
-
 _DATE_TOKEN_RE = re.compile(
-    r"\b("                                    # několik běžných zápisů data
-    r"\d{4}[./-]\d{1,2}[./-]\d{1,2}"          # 2025-09-26, 2025/8/20, 2025.8.19
-    r"|"
-    r"\d{1,2}[./-]\d{1,2}[./-]\d{4}"          # 28/09/2025, 19.8.2025
-    r"|"
-    r"(?:\d{1,2}(?:st|nd|rd|th)?\s+)?[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*)?\s*\d{4}"  # Aug 21, 2025 / 21st August 2025
-    r")\b",
-    re.IGNORECASE
+    r"\b(" 
+    r"\d{4}[./-]\d{1,2}[./-]\d{1,2}"                    # 2025-09-26 / 2025.8.19
+    r"|" r"\d{1,2}[./-]\d{1,2}[./-]\d{4}"               # 28/09/2025
+    r"|" r"(?:\d{1,2}(?:st|nd|rd|th)?\s+)?[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*)?\s*\d{4}"
+    r")\b", re.IGNORECASE
 )
 
 def guess_signature_date(fields: dict, text: str) -> str | None:
-    # 1) Zkuste form fields
-    for k, v in (fields or {}).items():
+    # 1) Políčka formuláře
+    cand_keys = ("signature date","date","signature_date","signature date_af_date","signature","signed on")
+    for k,v in (fields or {}).items():
         key = str(k).strip().lower()
-        if any(x in key for x in _SIG_DATE_CAND_KEYS):
-            raw = None
-            if isinstance(v, dict):
-                raw = v.get("/V") or v.get("V")
-            else:
-                raw = v
+        if any(x in key for x in cand_keys):
+            raw = (v.get("/V") or v.get("V")) if isinstance(v, dict) else v
             iso = normalize_signature_date(str(raw) if raw is not None else None)
-            if iso:
-                return iso
+            if iso: return iso
 
-    # 2) Z textu – přednostně část „6. Declaration“
+    # 2) Z textu (preferenčně blok od „6. Declaration“ dál)
     scope = text or ""
-    m = re.search(r"\b6\.\s*Declaration.*", scope, flags=re.IGNORECASE | re.DOTALL)
-    if m:
-        scope = m.group(0)
-
+    m = re.search(r"\b6\.\s*Declaration.*", scope, flags=re.IGNORECASE|re.DOTALL)
+    if m: scope = m.group(0)
     for m in _DATE_TOKEN_RE.finditer(scope):
         iso = normalize_signature_date(m.group(0))
-        if iso:
-            return iso
+        if iso: return iso
     return None
 
 def read_pdf_form_fields(path: Path) -> Dict[str, Any]:

@@ -4,7 +4,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .pdf_parser import read_pdf_text, read_pdf_form_fields, parse_istqb_academia_application
+from .pdf_parser import read_pdf_text, read_pdf_form_fields, parse_istqb_academia_application, guess_signature_date
 from .istqb_boards import KNOWN_BOARDS
 
 @dataclass
@@ -118,10 +118,10 @@ class PdfScanner:
         contact_phone = fval("phone") or ""
         contact_addr  = fval("postal address") or ""
 
-        # Signature date – z polí / z textu → vždy YYYY-MM-DD
+        # Signature date – form fields / text → vždy YYYY-MM-DD
         sig_iso = guess_signature_date(fields, text) or ""
 
-        # Eligibility (sekce 5) – Overview skryté, v PDF Browseru viditelné
+        # Eligibility (sekce 5) – načteno, v Overview skryto
         syllabi_desc = fval("syllabi", "integrated") or ""
         courses_list = fval("courses/modules", "courses and modules", "courses") or ""
         proof_cert   = fval("proof of istqb", "proof of certifications") or ""

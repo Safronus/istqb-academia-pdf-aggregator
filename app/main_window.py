@@ -409,19 +409,48 @@ class MainWindow(QMainWindow):
 
     # ----- Data -----
     def rescan(self) -> None:
-        scanner = PdfScanner(self.pdf_root)
-    
-        # Diagnostika: kolik PDF souborů existuje v kořeni (bez parsování)
+        from pathlib import Path
+        # --- 1) Robustní určení kořene PDF ---
+        candidates = []
+        if isinstance(getattr(self, "pdf_root", None), Path):
+            candidates.append(self.pdf_root)
+        # adresář, kde leží tento soubor (app/)
         try:
-            found = 0
-            for p in self.pdf_root.rglob("*"):
-                if p.is_file() and p.suffix.lower() == ".pdf":
-                    found += 1
+            candidates.append(Path(__file__).resolve().parent.parent / "PDF")
         except Exception:
-            found = -1  # nešlo spočítat (např. neexistující cesta)
+            pass
+        # aktuální pracovní adresář
+        try:
+            candidates.append(Path.cwd() / "PDF")
+        except Exception:
+            pass
     
-        self.records = scanner.scan()
+        chosen = None
+        for c in candidates:
+            try:
+                if isinstance(c, Path) and c.exists() and c.is_dir():
+                    chosen = c
+                    break
+            except Exception:
+                continue
+        if chosen is None:
+            chosen = candidates[0] if candidates else None
     
+        if chosen is not None and chosen != getattr(self, "pdf_root", None):
+            self.pdf_root = chosen
+    
+        # --- 2) Diagnostika počtu nalezených PDF (bez parsování) ---
+        try:
+            found = sum(1 for p in self.pdf_root.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf") \
+                    if isinstance(self.pdf_root, Path) else 0
+        except Exception:
+            found = 0
+    
+        # --- 3) Skutečné parsování ---
+        scanner = PdfScanner(self.pdf_root) if isinstance(self.pdf_root, Path) else None
+        self.records = scanner.scan() if scanner else []
+    
+        # --- 4) Naplnění modelu ---
         from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
     
         headers = [
@@ -466,11 +495,10 @@ class MainWindow(QMainWindow):
                     items[c].setBackground(brush)
     
         for rec in self.records:
-            row_vals = rec.as_row()  # délka 17
+            row_vals = rec.as_row()  # 17 prvků
             items = [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
-    
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
             paint_group(items, COLS_RECOG,      BRUSH_RECOG)
@@ -489,17 +517,17 @@ class MainWindow(QMainWindow):
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
     
-        # Výchozí řazení: Board
+        # Výchozí řazení: Board → (RecordsModel.lessThan dodrží multiklíč)
         self.table.sortByColumn(0, Qt.AscendingOrder)
     
         # Skryj Eligibility sloupce v Overview
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # Stav – kolik PDF nalezeno a kolik naparsováno
+        # Stav – kolik PDF nalezeno a kolik naparsováno + jaký root se použil
         try:
-            msg = f"PDF found: {found if found >= 0 else 'n/a'} • Parsed: {len(self.records)} • Root: {self.pdf_root}"
-            self.statusBar().showMessage(msg)
+            root_str = str(self.pdf_root) if isinstance(self.pdf_root, Path) else "<unset>"
+            self.statusBar().showMessage(f"PDF found: {found} • Parsed: {len(self.records)} • Root: {root_str}")
         except Exception:
             pass
     
