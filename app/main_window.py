@@ -370,48 +370,178 @@ class MainWindow(QMainWindow):
     
     def _recognized_candidates_from_sorted(self) -> list[dict]:
         """
-        Sestav unikátní kandidáty z DB Sorted PDFs.
-        Vrací list dictů: {board, full_name, email, address, academia(bool), certified(bool)}
+        Najdi kandidáty pro Recognized Add dialog.
+        Preferujeme 'Sorted DB' v paměti; pokud není, zkusíme běžné JSON cesty.
+        Jako poslední fallback odvodíme kandidáty z Overview tabulky.
+    
+        Vrací list dictů:
+          { "board": str, "full_name": str, "email": str, "address": str,
+            "academia": bool, "certified": bool }
         """
-        out = []
-        seen = set()
-        # očekáváme, že self.sorted_db nebo obdobná struktura existuje
-        sorted_db = getattr(self, "sorted_db", None)
-        if not sorted_db:
-            return out
+        from pathlib import Path
+        candidates: list[dict] = []
+        seen: set[tuple] = set()
     
-        # sorted_db může být dict/list – snaž se robustně projít
-        def _iter_recs(container):
-            if isinstance(container, dict):
-                for v in container.values():
-                    yield v
-            elif isinstance(container, list):
-                for v in container:
-                    yield v
-    
-        for rec in _iter_recs(sorted_db):
-            try:
-                board = getattr(rec, "board", None) or rec.get("board", "")
-                full  = getattr(rec, "contact_full_name", None) or rec.get("contact_full_name", "")
-                mail  = getattr(rec, "contact_email", None) or rec.get("contact_email", "")
-                addr  = getattr(rec, "contact_postal_address", None) or rec.get("contact_postal_address", "")
-                acad  = bool(getattr(rec, "recognition_academia", None) or rec.get("recognition_academia", ""))
-                cert  = bool(getattr(rec, "recognition_certified", None) or rec.get("recognition_certified", ""))
-            except Exception:
-                continue
-            key = (board, full, mail, addr)
+        def _add(board, full, mail, addr, acad, cert):
+            key = (str(board or ""), str(full or ""), str(mail or ""), str(addr or ""), bool(acad), bool(cert))
             if key in seen:
-                continue
+                return
             seen.add(key)
-            out.append({
+            candidates.append({
                 "board": str(board or ""),
                 "full_name": str(full or ""),
                 "email": str(mail or ""),
                 "address": str(addr or ""),
-                "academia": acad,
-                "certified": cert,
+                "academia": bool(acad),
+                "certified": bool(cert),
             })
-        return out    
+    
+        # 1) In-memory zdroje – různé názvy používané v projektu
+        for attr in ("sorted_db", "_sorted_db", "sorted_records", "_sorted_records", "sorted_data", "_sorted_data"):
+            container = getattr(self, attr, None)
+            if not container:
+                continue
+    
+            def _iter(container):
+                if isinstance(container, dict):
+                    for v in container.values():
+                        yield v
+                elif isinstance(container, list):
+                    for v in container:
+                        yield v
+    
+            for rec in _iter(container):
+                # rec může být objekt i dict
+                try:
+                    get = (lambda k, default="": getattr(rec, k, getattr(rec, k.replace(" ", "_"), None))
+                           if hasattr(rec, k) or hasattr(rec, k.replace(" ", "_"))
+                           else rec.get(k, rec.get(k.replace(" ", "_"), default)))
+                except Exception:
+                    # rec je nejspíš dict
+                    def get(k, default=""):
+                        return rec.get(k, rec.get(k.replace(" ", "_"), default))
+    
+                board = get("board", "")
+                full  = get("contact_full_name", "") or get("full_name", "")
+                mail  = get("contact_email", "") or get("email", "")
+                addr  = get("contact_postal_address", "") or get("address", "")
+    
+                acad_raw = get("recognition_academia", "")
+                cert_raw = get("recognition_certified", "")
+                # Interpretuj jakýkoli neprázdný string/true hodnotu jako True
+                acad = bool(acad_raw) and str(acad_raw).strip().lower() not in ("false", "0", "no", "none")
+                cert = bool(cert_raw) and str(cert_raw).strip().lower() not in ("false", "0", "no", "none")
+    
+                if full or mail:
+                    _add(board, full, mail, addr, acad, cert)
+    
+            if candidates:
+                return candidates  # máme výsledky, dál nehledáme
+    
+        # 2) JSON soubory – pár běžných cest/jmen (pokud existují)
+        try_paths = []
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            try_paths.extend([
+                repo_root / "sorted_db.json",
+                repo_root / "sorted_records.json",
+                repo_root / "data" / "sorted_db.json",
+                repo_root / "Sorted PDFs" / "sorted_db.json",
+            ])
+        except Exception:
+            pass
+    
+        import json
+        for p in try_paths:
+            try:
+                if p.exists():
+                    with p.open("r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    # projdi stejným způsobem jako in-memory
+                    def _iter2(container):
+                        if isinstance(container, dict):
+                            for v in container.values():
+                                yield v
+                        elif isinstance(container, list):
+                            for v in container:
+                                yield v
+                    for rec in _iter2(data):
+                        if isinstance(rec, dict):
+                            board = rec.get("board", "")
+                            full  = rec.get("contact_full_name", "") or rec.get("full_name", "")
+                            mail  = rec.get("contact_email", "") or rec.get("email", "")
+                            addr  = rec.get("contact_postal_address", "") or rec.get("address", "")
+                            acad_raw = rec.get("recognition_academia", "")
+                            cert_raw = rec.get("recognition_certified", "")
+                            acad = bool(acad_raw) and str(acad_raw).strip().lower() not in ("false", "0", "no", "none")
+                            cert = bool(cert_raw) and str(cert_raw).strip().lower() not in ("false", "0", "no", "none")
+                            if full or mail:
+                                _add(board, full, mail, addr, acad, cert)
+                    if candidates:
+                        return candidates
+            except Exception:
+                continue
+    
+        # 3) Fallback: odvoď z Overview tabulky (_source_model) — pokud existuje
+        for d in self._overview_iter_records_as_dicts():
+            board = d.get("board", "")
+            full  = d.get("contact_full_name", "") or d.get("full_name", "")
+            mail  = d.get("contact_email", "") or d.get("email", "")
+            addr  = d.get("contact_postal_address", "") or d.get("address", "")
+            acad_raw = d.get("recognition_academia", "")
+            cert_raw = d.get("recognition_certified", "")
+            acad = bool(acad_raw) and str(acad_raw).strip().lower() not in ("false", "0", "no", "none")
+            cert = bool(cert_raw) and str(cert_raw).strip().lower() not in ("false", "0", "no", "none")
+            if full or mail:
+                _add(board, full, mail, addr, acad, cert)
+    
+        return candidates
+    
+    def _overview_iter_records_as_dicts(self) -> list[dict]:
+        """
+        Přečti data z Overview (pokud existuje _source_model) a vrať list dictů
+        se standardizovanými klíči: board, contact_full_name, contact_email,
+        contact_postal_address, recognition_academia, recognition_certified.
+        Pokud model neexistuje, vrať [].
+        """
+        from PySide6.QtCore import Qt
+        out: list[dict] = []
+        src = getattr(self, "_source_model", None)
+        if not src:
+            return out
+    
+        # mapuj indexy sloupců podle _headers
+        idx = {}
+        headers = getattr(self, "_headers", [])
+        def _find(col_label_suffix: str) -> int | None:
+            # hledáme poslední řádek popisku po \n
+            for i, h in enumerate(headers):
+                tail = h.split("\n")[-1].strip() if "\n" in h else h.strip()
+                if tail.lower() == col_label_suffix.lower():
+                    return i
+            return None
+    
+        col_board = _find("Board")
+        col_full  = _find("Full Name")
+        col_mail  = _find("Email Address")
+        col_addr  = _find("Postal Address")
+        col_acad  = _find("Academia Recognition")
+        col_cert  = _find("Certified Recognition")
+    
+        rows = src.rowCount()
+        for r in range(rows):
+            def _val(c):
+                if c is None: return ""
+                return src.index(r, c).data(Qt.DisplayRole) or ""
+            out.append({
+                "board": _val(col_board),
+                "contact_full_name": _val(col_full),
+                "contact_email": _val(col_mail),
+                "contact_postal_address": _val(col_addr),
+                "recognition_academia": _val(col_acad),
+                "recognition_certified": _val(col_cert),
+            })
+        return out
     
     def _recognized_open_add_dialog(self, initial: dict | None = None) -> dict | None:
         """
