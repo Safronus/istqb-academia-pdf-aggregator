@@ -285,22 +285,43 @@ class MainWindow(QMainWindow):
 
     # ----- Overview tab -----
     def _build_overview_tab(self) -> None:
+        from PySide6.QtWidgets import (
+            QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
+            QPushButton, QTableView, QToolButton
+        )
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QKeySequence
+        from PySide6.QtWidgets import QStyle
+    
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
+        # --- NEW: Refresh button (ikonové) ---
+        self.btn_refresh = QToolButton(self)
+        self.btn_refresh.setToolTip("Refresh (rescan PDFs)")
+        self.btn_refresh.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.btn_refresh.setAutoRaise(True)
+        self.btn_refresh.clicked.connect(self.refresh_overview)
+        controls.addWidget(self.btn_refresh)
+    
+        # Board filter (beze změny logiky)
         self.board_combo = QComboBox()
         self.board_combo.addItem("All")
         for b in sorted(KNOWN_BOARDS):
             self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
+        # Fulltext search (beze změny)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
     
+        # Open PDF (beze změny)
         self.open_btn = QPushButton("Open PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
     
+        # Rozmístění ovládacích prvků (zachován pořádek, jen přidán Refresh vlevo)
+        controls.addSpacing(8)
         controls.addWidget(QLabel("Board:"))
         controls.addWidget(self.board_combo, 1)
         controls.addSpacing(12)
@@ -311,6 +332,7 @@ class MainWindow(QMainWindow):
     
         layout.addLayout(controls)
     
+        # Tabulka Overview (beze změny parametrů)
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
@@ -320,13 +342,177 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # >>> Přidáno: kontextové menu pro editaci v Overview
+        # Kontextové menu pro edit (pokud už bylo, ponecháno)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        try:
+            self.table.customContextMenuRequested.disconnect()
+        except Exception:
+            pass
         self.table.customContextMenuRequested.connect(self.on_overview_context_menu)
-        # <<<
     
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
+    
+        # Hned po vytvoření Overview vypneme real-time rescan, aby se UI samo neobnovovalo
+        self.disable_realtime_rescan()
+        
+    def refresh_overview(self) -> None:
+        """Manuální refresh Overview: rescan a následné vypnutí případných watcherů."""
+        try:
+            self.statusBar().showMessage("Refreshing…")
+        except Exception:
+            pass
+        try:
+            self.rescan()
+        finally:
+            # Jistota: po každém rescan vypnout případné auto-watchery
+            self.disable_realtime_rescan()
+            try:
+                self.statusBar().showMessage("Refreshed.")
+            except Exception:
+                pass
+            
+    def disable_realtime_rescan(self) -> None:
+        """
+        Vypne real-time sledování změn:
+        - zastaví všechny QTimer uložené jako atributy okna,
+        - odpojí a vyčistí všechny QFileSystemWatcher nalezené mezi atributy okna.
+        Přístup je defenzivní, nic neháže ven.
+        """
+        try:
+            from PySide6.QtCore import QTimer, QFileSystemWatcher
+        except Exception:
+            QTimer = None
+            QFileSystemWatcher = None  # type: ignore
+    
+        # Stop all QTimer attributes
+        try:
+            for name, obj in list(self.__dict__.items()):
+                if QTimer and isinstance(obj, QTimer):
+                    try:
+                        obj.stop()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    
+        # Disconnect & clear all QFileSystemWatcher attributes
+        try:
+            for name, obj in list(self.__dict__.items()):
+                if QFileSystemWatcher and isinstance(obj, QFileSystemWatcher):
+                    # odpojit signály, pokud byly napojeny
+                    try:
+                        obj.directoryChanged.disconnect()
+                    except Exception:
+                        pass
+                    try:
+                        obj.fileChanged.disconnect()
+                    except Exception:
+                        pass
+                    # odstranit všechny cesty
+                    try:
+                        paths = []
+                        try:
+                            paths += obj.directories()
+                        except Exception:
+                            pass
+                        try:
+                            paths += obj.files()
+                        except Exception:
+                            pass
+                        if paths:
+                            obj.removePaths(paths)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    
+        # Flag (pro případ, že to chcete číst jinde)
+        try:
+            self._live_rescan_enabled = False
+        except Exception:
+            pass
+        
+    def install_manual_refresh_guard(self) -> None:
+        """
+        Tvrdě vypne real-time obnovování Overview:
+        - Jakékoliv volání self.rescan() BEZ parametru manual=True se prostě neprovede.
+        - Tlačítko Refresh (pokud existuje) se přepojí na self.rescan(manual=True).
+        - Defenzivně zastaví případné QTimer/QFileSystemWatcher instance v okně.
+        Tím nezasahuji do vnitřní logiky rescan(); jen ji hlídám.
+        """
+        import types
+        from PySide6.QtCore import QTimer
+        try:
+            from PySide6.QtCore import QFileSystemWatcher
+        except Exception:
+            QFileSystemWatcher = None  # type: ignore
+    
+        # Flag manual-only režimu
+        self._manual_refresh_only = True
+    
+        # Monkey-patch originální rescan tak, aby ignoroval auto volání
+        if not hasattr(self, "_orig_rescan"):
+            self._orig_rescan = self.rescan  # uložit původní bound-method
+    
+            def _guarded_rescan(this, *args, **kwargs):
+                manual = kwargs.pop("manual", False)
+                if getattr(this, "_manual_refresh_only", False) and not manual:
+                    # Auto volání je zakázané
+                    try:
+                        this.statusBar().showMessage("Auto refresh blocked (manual mode).")
+                    except Exception:
+                        pass
+                    return None
+                # Manuální refresh – proveď původní rescan
+                return this._orig_rescan(*args, **kwargs)
+    
+            # Přebindujeme na instanci
+            self.rescan = types.MethodType(_guarded_rescan, self)
+    
+        # Pokud existuje tlačítko Refresh, přepoj ho na manual=True
+        if hasattr(self, "btn_refresh") and self.btn_refresh is not None:
+            try:
+                self.btn_refresh.clicked.disconnect()
+            except Exception:
+                pass
+            self.btn_refresh.clicked.connect(lambda: self.rescan(manual=True))
+    
+        # Defenzivně zastavit jakékoliv QTimer a QFileSystemWatcher uložené jako atributy okna
+        try:
+            for _, obj in list(self.__dict__.items()):
+                if isinstance(obj, QTimer):
+                    try:
+                        obj.stop()
+                    except Exception:
+                        pass
+                if QFileSystemWatcher and isinstance(obj, QFileSystemWatcher):
+                    try:
+                        # odpojit signály
+                        obj.directoryChanged.disconnect()
+                    except Exception:
+                        pass
+                    try:
+                        obj.fileChanged.disconnect()
+                    except Exception:
+                        pass
+                    # odstranit sledované cesty
+                    try:
+                        paths = []
+                        try:
+                            paths += obj.directories()
+                        except Exception:
+                            pass
+                        try:
+                            paths += obj.files()
+                        except Exception:
+                            pass
+                        if paths:
+                            obj.removePaths(paths)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     
     def _filter_board(self, txt: str) -> None:
         proxy = self.table.model()

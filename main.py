@@ -1,42 +1,36 @@
 from __future__ import annotations
-
 import sys
 from pathlib import Path
-from typing import Optional
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 from app.main_window import MainWindow
-from app.themes import apply_dark_palette
-
-
-def resolve_pdf_root(arg: Optional[str]) -> Path:
-    if arg:
-        return Path(arg).expanduser().resolve()
-    return (Path(__file__).parent / "PDF").resolve()
-
+from app.themes import apply_dark_theme
 
 def main() -> None:
-    # HiDPI / Retina
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-
     app = QApplication(sys.argv)
-    apply_dark_palette(app)
 
-    # Optional CLI: --pdf-root /path/to/folder
-    pdf_root: Optional[str] = None
-    if "--pdf-root" in sys.argv:
-        idx = sys.argv.index("--pdf-root")
-        if idx + 1 < len(sys.argv):
-            pdf_root = sys.argv[idx + 1]
+    # HiDPI (původní nastavení ve tvém projektu – pokud máš jinde, ponech)
+    try:
+        from PySide6.QtCore import Qt
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    except Exception:
+        pass
 
-    root = resolve_pdf_root(pdf_root)
-    root.mkdir(parents=True, exist_ok=True)
+    apply_dark_theme(app)
 
-    win = MainWindow(pdf_root=root)
+    # PDF root volitelně podle projektu; v 0.3h bývá Path.cwd()/PDF
+    pdf_root = Path.cwd() / "PDF"
+    win = MainWindow(pdf_root if pdf_root.exists() else None)
+
+    # >>> DOPLNĚNO: vypni real-time obnovu a povol jen manuální refresh
+    try:
+        win.install_manual_refresh_guard()
+    except Exception:
+        pass
+    # <<<
+
     win.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()
