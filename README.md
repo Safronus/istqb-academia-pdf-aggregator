@@ -177,10 +177,10 @@ git push --tags
 ---
 
 ## Changelog
-
 - **0.6a — 2025-11-12**
-  - **fix:** Preserve selection in **Overview** during auto-rescan (selection no longer clears before exporting to *Sorted PDFs*).
-  - **fix:** Changed Czech prompt *"Vyber alespoň jeden řádek."* to English: *"Please select at least one row."* in the export-to-sorted action.
+  - **fix:** Preserve row selection in **Overview** during auto-rescan (no unexpected clearing before export).
+  - **fix:** Empty-selection prompt unified to English: *"Please select at least one row."*.
+  - **fix:** Overview table repopulation stabilized (single persistent model + proxy).
 
 - **0.5 (2025-11-12):**
   - **feat:** Redesigned 'Sorted PDFs' tab into a persistent database-backed manager.
@@ -193,6 +193,7 @@ git push --tags
 - **0.3h — 2025‑11‑11**
   - Baseline: Overview + PDF Browser, grouped columns, Yes/No icons for Wished Recognitions, signature date normalization, `__archive__` ignored.
   - Optional **Sorted PDFs** tab support (reads `Sorted PDFs/` if present).
+
 ---
 
 ## License
