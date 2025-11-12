@@ -1517,8 +1517,8 @@ class MainWindow(QMainWindow):
     
     def _overview_update_sorted_flags(self) -> None:
         """
-        Dosadí do POSLEDNÍHO sloupce 'Sorted' hodnotu 'Yes' / '' podle shody názvu souboru
-        s DB/FS 'Sorted'. Nezasahuje do ostatních dat.
+        Dosadí do POSLEDNÍHO sloupce 'Sorted' hodnotu 'Yes' / '' podle
+        SHODY SHA-256 HASHŮ mezi zdrojovým PDF a libovolným PDF ve „Sorted PDFs“.
         """
         from PySide6.QtCore import Qt
     
@@ -1527,13 +1527,21 @@ class MainWindow(QMainWindow):
         if fn_col is None or sorted_col is None:
             return
     
-        sorted_names = self._collect_sorted_filenames()
+        sorted_hashes = self._collect_sorted_hashes()
     
         rows = self._source_model.rowCount()
         for r in range(rows):
             idx_fn = self._source_model.index(r, fn_col)
-            fname = self._source_model.data(idx_fn, Qt.DisplayRole) or ""
-            mark = "Yes" if fname and fname in sorted_names else ""
+            fname = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
+            mark = ""
+            try:
+                path = self._find_record_path_for_filename(fname)
+                if path:
+                    dig = self._hash_file(path)
+                    if dig and dig in sorted_hashes:
+                        mark = "Yes"
+            except Exception:
+                mark = ""
             self._source_model.setData(self._source_model.index(r, sorted_col), mark)
             
     def _overview_apply_sorted_row_hiding(self) -> None:
@@ -1569,6 +1577,103 @@ class MainWindow(QMainWindow):
             self._overview_apply_sorted_row_hiding()
         except Exception:
             pass
+        
+    def _find_record_path_for_filename(self, fname: str):
+        """
+        Najde absolutní cestu k PDF dle názvu souboru.
+        Preferuje data z self.records (rec.path), fallback: vyhledání pod pdf_root (rglob).
+        Výsledek cache-uje v self._fname_to_path_cache.
+        """
+        from pathlib import Path
+    
+        if not fname:
+            return None
+        if not hasattr(self, "_fname_to_path_cache"):
+            self._fname_to_path_cache = {}
+    
+        if fname in self._fname_to_path_cache:
+            return self._fname_to_path_cache[fname]
+    
+        # 1) records -> path
+        try:
+            recs = getattr(self, "records", None) or []
+            for rec in recs:
+                p = getattr(rec, "path", None)
+                if p:
+                    try:
+                        if Path(p).name == fname:
+                            self._fname_to_path_cache[fname] = Path(p)
+                            return self._fname_to_path_cache[fname]
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    
+        # 2) fallback – najít pod pdf_root
+        try:
+            root = getattr(self, "pdf_root", None)
+            if root:
+                root = Path(root)
+                for p in root.rglob(fname):
+                    if p.is_file():
+                        self._fname_to_path_cache[fname] = p
+                        return p
+        except Exception:
+            pass
+    
+        self._fname_to_path_cache[fname] = None
+        return None
+        
+    def _collect_sorted_hashes(self) -> set[str]:
+        """
+        Projde rekurzivně složku 'Sorted PDFs' (pokud existuje) a vrátí set SHA-256 hashů všech PDF.
+        """
+        from pathlib import Path
+    
+        hashes: set[str] = set()
+        try:
+            roots = []
+            # pokus o vyvození kořene
+            if hasattr(self, "pdf_root") and self.pdf_root:
+                roots.append(Path(self.pdf_root))
+            roots.append(Path(__file__).resolve().parents[2])  # repo root
+    
+            for root in roots:
+                d = root / "Sorted PDFs"
+                if d.exists() and d.is_dir():
+                    for p in d.rglob("*.pdf"):
+                        dig = self._hash_file(p)
+                        if dig:
+                            hashes.add(dig)
+                    break  # našli jsme složku, stačí první výskyt
+        except Exception:
+            pass
+        return hashes
+        
+    def _hash_file(self, path) -> str:
+        """
+        Spočítá SHA-256 daného souboru (čtení po blocích). Využívá jednoduchou cache.
+        """
+        from pathlib import Path
+        import hashlib
+    
+        try:
+            p = Path(path)
+            if not hasattr(self, "_hash_cache"):
+                self._hash_cache = {}
+            key = str(p.resolve())
+            if key in self._hash_cache:
+                return self._hash_cache[key]
+    
+            h = hashlib.sha256()
+            with p.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    h.update(chunk)
+            dig = h.hexdigest()
+            self._hash_cache[key] = dig
+            return dig
+        except Exception:
+            return ""
         
     def _rebuild_board_combo(self) -> None:
         """

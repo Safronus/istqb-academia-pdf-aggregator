@@ -1,19 +1,16 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.10c — 2025-11-12
-### Recognized People List
-- **Add person…** now **splits multiple badges into separate records** (e.g., Academia **and** Certified -> two rows), inserted together (grouped visually).
-- **Valid Until** is **auto-computed** as *Recognition Date + 1 year* on load, add and edit.
-- **Row coloring** (applied when switching to the tab):
-  - **Green**: validity > 1 month remaining
-  - **Yellow**: ≤ 1 month remaining (still valid)
-  - **Red**: expired (after *Valid Until*)
-- **Edit…**: if you select both badges for a single-row edit, current row is updated for one badge and the **missing badge** is optionally inserted as another row (if not a duplicate).
-- Column widths keep **auto-fitting** to content.
+## Version 0.10g — 2025-11-12
+### Overview — Sorted indicator by PDF hashes
+- The **Sorted** column is now computed by **cryptographic hash match (SHA‑256)** between the source PDF and any PDF found under **“Sorted PDFs”** (recursive).
+- If a row's file hash matches a hash in “Sorted PDFs”, the indicator shows **Yes**; otherwise it's empty.
+- Hashing uses a **chunked reader** and a small in‑memory **cache** to avoid re‑hashing the same file repeatedly during a session.
+- The indicator refreshes automatically when the Overview table rebuilds or after rescans.
 
 ### Notes
-- JSON persistence unchanged (`recognized_people.json`, git-ignored).
-- No changes to other tabs.
+- No changes to existing UI/behaviour besides the Sorted indicator logic.
+- Fallback filename matching is no longer used; only **hash equality** determines Sorted status.
+- macOS HiDPI friendly; PySide6 only.
 
 ### macOS quick start
 ```bash
