@@ -14,6 +14,73 @@ from PySide6.QtWidgets import (
 from .pdf_scanner import PdfScanner, PdfRecord
 from .istqb_boards import KNOWN_BOARDS
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QApplication, QStyle
+
+class BoardHidingDelegate(QStyledItemDelegate):
+    """
+    Vykreslovací delegát pro sloupec 'Board':
+    - Pro PRVNÍ výskyt hodnoty v aktuálním pořadí tabulky vykreslí text normálně.
+    - Pro DALŠÍ výskyty stejné hodnoty vykreslí prázdný text (jen vizuálně).
+    - Nezasahuje do modelu, dat ani exportu (data(DisplayRole) zůstávají zachována).
+    """
+    def paint(self, painter, option, index):
+        if index.column() == 0:  # sloupec Board
+            current = index.data(Qt.DisplayRole)
+            hide = False
+            # Zjisti, zda se stejná hodnota vyskytla již výše (v proxy pořadí)
+            # Pozn.: lineární průchod jen přes viditelný model; výkonově OK pro běžné tabulky.
+            try:
+                model = index.model()
+                for r in range(0, index.row()):
+                    other = model.index(r, index.column()).data(Qt.DisplayRole)
+                    if other == current and current not in (None, ""):
+                        hide = True
+                        break
+            except Exception:
+                hide = False
+
+            if hide:
+                opt = QStyleOptionViewItem(option)
+                self.initStyleOption(opt, index)
+                opt.text = ""  # vykreslit prázdný text, zbytek styly necháme
+                style = option.widget.style() if option.widget else QApplication.style()
+                style.drawControl(QStyle.CE_ItemViewItem, opt, painter, option.widget)
+                return
+
+        # Defaultní vykreslení pro ostatní sloupce nebo první výskyt Board
+        super().paint(painter, option, index)
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+
 class RecordsModel(QSortFilterProxyModel):
     def __init__(self, headers: List[str], parent=None):
         super().__init__(parent)
@@ -445,6 +512,9 @@ class MainWindow(QMainWindow):
             self._proxy.setSourceModel(self._source_model)
             self._proxy.setDynamicSortFilter(True)
             self.table.setModel(self._proxy)
+            
+        self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
+        
         # Skryj Eligibility sloupce už zde
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
