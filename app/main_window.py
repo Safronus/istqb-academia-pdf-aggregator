@@ -1147,15 +1147,15 @@ class MainWindow(QMainWindow):
         """
         UI pro záložku 'Sorted PDFs': vlevo strom Board -> PDF, vpravo detailní formulář.
         Minimal-change:
-          - doplněny přesné názvy polí očekávané zbytkem kódu (vč. ed_sigdate),
-          - přidány kompatibilní aliasy (ed_inst/ed_cand/ed_signature_date …),
+          - doplněny očekávané názvy polí (ed_inst_name/ed_cand_name/ed_rec_acad/ed_rec_cert/ed_sigdate + aliasy),
+          - přidány jemné korekce velikostí (splitter, autosize stromu, kompaktní výška PTE),
           - zachováno tlačítko 'Export…' (volá export_sorted_db()).
         """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
             QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton
         )
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QTimer
     
         layout = QVBoxLayout()
     
@@ -1189,23 +1189,24 @@ class MainWindow(QMainWindow):
         self.ed_sigdate = QLineEdit()      # očekáváno _sorted_set_editable
         self.ed_filename = QLineEdit()
     
-        # Víceřádková pole
+        # Víceřádková pole – kompaktní výšky (jemná korekce)
         self.ed_address = QPlainTextEdit()
         self.ed_syllabi = QPlainTextEdit()
         self.ed_courses = QPlainTextEdit()
         self.ed_proof = QPlainTextEdit()
         self.ed_links = QPlainTextEdit()
         self.ed_additional = QPlainTextEdit()
+        for pte in (self.ed_address, self.ed_syllabi, self.ed_courses,
+                    self.ed_proof, self.ed_links, self.ed_additional):
+            pte.setMinimumHeight(56)  # čitelná výška
+            pte.setMaximumHeight(120) # nepřerůstá; víc obsahu = scroll uvnitř pole
     
-        # ---- Kompatibilní aliasy (žádná nová logika; jen jmenné mosty) ----
-        # dřívější krátké názvy
+        # ---- Kompatibilní aliasy (jen jmenné mosty) ----
         self.ed_inst = self.ed_inst_name
         self.ed_cand = self.ed_cand_name
         self.ed_acad = self.ed_rec_acad
         self.ed_cert = self.ed_rec_cert
-        # alias na dřívější delší název pro datum
         self.ed_signature_date = self.ed_sigdate
-        # názvy odpovídající klíčům v DB (pro ostatní části kódu/exporty)
         self.ed_contact_full_name = self.ed_fullname
         self.ed_contact_email = self.ed_email
         self.ed_contact_phone = self.ed_phone
@@ -1268,6 +1269,25 @@ class MainWindow(QMainWindow):
     
         layout.addWidget(self.split_sorted, 1)
         self.sorted_tab.setLayout(layout)
+    
+        # ===== Jemné sizing doladění po vystavění UI (po event loopu) =====
+        def _apply_sorted_sizes():
+            try:
+                # rozumné počáteční rozměry okna (není závazné – jen pokud je menší)
+                rec_w, rec_h = 1200, 820
+                if self.width() < rec_w or self.height() < rec_h:
+                    self.resize(max(self.width(), rec_w), max(self.height(), rec_h))
+            except Exception:
+                pass
+            try:
+                # autosize sloupce stromu + výchozí poměr splitteru
+                self.tree_sorted.resizeColumnToContents(0)
+                total_w = max(self.width(), 1200)
+                self.split_sorted.setSizes([int(total_w * 0.48), int(total_w * 0.52)])
+            except Exception:
+                pass
+    
+        QTimer.singleShot(0, _apply_sorted_sizes)
         
     def export_sorted_db(self) -> None:
         """
