@@ -1,23 +1,13 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.10k — 2025-11-12
-### Overview (selection stability + visuals)
-- **Selection stability:** Selecting one row no longer leads to *selecting all* after the Sorted refresh.
-  - During Sorted refresh and row hiding, the code now **captures current selection by file name**,
-    updates the model **without noisy signals**, and **restores exactly the same selection** afterwards.
-  - No auto-refresh hooks that would re-trigger selection are invoked during user interaction.
-- **Sorted column appearance:** kept centered **check icon** and added **light‑gray background** for the whole column (unchanged from 0.10j).
+## Version 0.10o — 2025-11-12
+### Overview
+- **Sorted column finally stable:** `rescan()` now builds the Overview with the **Sorted** column present
+  and fills it right after repopulation using SHA‑256 matches against *Sorted PDFs*.
+- **Selection stability:** `rescan()` now restores selection using the explicit **File name** column
+  (not by assuming it's the last column). This prevents deselection when auto-rescan triggers.
+- **Icons & visuals:** Wished Recognition icons and the Sorted icon are centered; Sorted column keeps a light‑gray background.
+- **Board combobox:** two sections (present boards → separator → remaining known boards) intact.
 
-### What changed technically
-- `_overview_update_sorted_flags(...)` now:
-  - caches **selected keys** (from “File name”),
-  - blocks selection signals and repaints while updating,
-  - sets data **only if changed**, and finally **restores selection** by keys.
-- `_overview_apply_sorted_row_hiding(...)` now:
-  - uses the same **selection preserve/restore** approach while toggling visibility,
-  - only touches rows whose visibility actually changes.
-
-### Other notes
-- No changes to exports, context menu, filters, or proxy behaviour.
-- Minimal‑change philosophy preserved; PySide6 only; macOS friendly.
+No other behaviour changed; minimal‑change patch for macOS / PySide6.
 

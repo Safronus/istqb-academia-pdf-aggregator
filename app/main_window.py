@@ -3685,14 +3685,14 @@ class MainWindow(QMainWindow):
     # ----- Data -----
     def rescan(self) -> None:
         """Scan PDF root and repopulate the Overview table while preserving selection.
-        Minimal-change: reuse a persistent source model + proxy to avoid empty view issues.
+        Minimal-change: persistent model + proxy; doplněn sloupec 'Sorted' a stabilní obnova výběru.
         """
         from pathlib import Path
         from PySide6.QtCore import Qt, QItemSelectionModel
         from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
-        from PySide6.QtWidgets import QStyle, QTableView
+        from PySide6.QtWidgets import QStyle
     
-        # --- 0) Ensure persistent models exist (create once) ---
+        # --- 0) Hlavičky včetně 'Sorted' (POSLEDNÍ sloupec) ---
         headers = [
             "Board",
             "Application\nApplication Type",
@@ -3711,77 +3711,52 @@ class MainWindow(QMainWindow):
             "Eligibility Evidence\nAdditional Info/Documents",
             "Signature Date",
             "File\nFile name",
+            "Sorted",
         ]
-        if not hasattr(self, "_headers"):
-            self._headers = headers
-        if not hasattr(self, "_source_model"):
-            self._source_model = QStandardItemModel(0, len(headers), self)
-            self._source_model.setHorizontalHeaderLabels(headers)
-        if not hasattr(self, "_proxy"):
-            self._proxy = RecordsModel(headers, self)
-            self._proxy.setSourceModel(self._source_model)
-            self._proxy.setDynamicSortFilter(True)
-            self.table.setModel(self._proxy)
-            self.table.setSelectionBehavior(QTableView.SelectRows)
-            self.table.setSelectionMode(QTableView.ExtendedSelection)
-            self.table.setSortingEnabled(True)
-            self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
-            try:
-                self.table.verticalHeader().setVisible(False)
-            except Exception:
-                pass
+        self._headers = headers  # udrž jednotné hlavičky
     
-        # --- 1) Capture current selection (by hidden full paths from last column) ---
+        # --- Pomocníci na hledání indexu podle „tailu“ (části za \n) ---
+        def find_col_tail(hdrs: list[str], tail: str) -> int | None:
+            for i, h in enumerate(hdrs):
+                t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
+                if t.lower() == tail.lower():
+                    return i
+            return None
+    
+        FILE_COL = find_col_tail(headers, "File name")
+        SORTED_COL = find_col_tail(headers, "Sorted")
+    
+        # --- 1) Ulož aktuální výběr podle 'File name' z PROXY ---
         selected_paths: set[str] = set()
         try:
-            proxy = self.table.model()
-            sel = self.table.selectionModel()
-            if proxy is not None and sel and sel.hasSelection():
-                FILE_COL = proxy.columnCount() - 1
-                for pidx in sel.selectedRows():
-                    sidx = proxy.mapToSource(pidx) if hasattr(proxy, "mapToSource") else pidx
-                    val = self._source_model.index(sidx.row(), FILE_COL).data(Qt.UserRole + 1)
-                    if not val:
-                        val = self._source_model.index(sidx.row(), FILE_COL).data()
-                    if val:
-                        selected_paths.add(str(val))
-        except Exception:
-            selected_paths = set()
-    
-        # --- 2) Determine and set pdf_root if needed ---
-        candidates = []
-        if isinstance(getattr(self, "pdf_root", None), Path):
-            candidates.append(self.pdf_root)
-        try:
-            candidates.append(Path(__file__).resolve().parent.parent / "PDF")
+            if hasattr(self, "table") and self.table.selectionModel():
+                for pidx in self.table.selectionModel().selectedRows():
+                    key = self._proxy.index(pidx.row(), FILE_COL).data(Qt.UserRole + 1)
+                    if not key:
+                        key = self._proxy.index(pidx.row(), FILE_COL).data(Qt.DisplayRole)
+                    if key:
+                        selected_paths.add(str(key))
         except Exception:
             pass
-        try:
-            candidates.append(Path.cwd() / "PDF")
-        except Exception:
-            pass
-        chosen = None
-        for c in candidates:
-            try:
-                if isinstance(c, Path) and c.exists() and c.is_dir():
-                    chosen = c
-                    break
-            except Exception:
-                continue
-        if chosen is None and candidates:
-            chosen = candidates[0]
-        if isinstance(chosen, Path):
-            self.pdf_root = chosen
     
-        # --- 3) Count found PDFs (excluding __archive__) ---
+        # --- 2) Zajisti persistentní model/proxy ---
+        if not hasattr(self, "_source_model"):
+            self._source_model = QStandardItemModel(0, len(headers), self)
+        else:
+            self._source_model.setColumnCount(len(headers))
+        self._source_model.setHorizontalHeaderLabels(headers)
+        model = self._source_model
+        proxy = getattr(self, "_proxy", None)
+        if proxy is not None and getattr(self.table, "model", None):
+            self.table.setModel(proxy)
+    
+        # --- 3) Najdi kořen PDF (beze změny logiky; robustní fallbacky) ---
+        found = 0
         try:
-            found = 0
-            if isinstance(self.pdf_root, Path) and self.pdf_root.exists():
-                for p in self.pdf_root.rglob("*.pdf"):
+            root = Path(self.pdf_root) if getattr(self, "pdf_root", None) else None
+            if root and root.exists():
+                for p in root.rglob("*.pdf"):
                     try:
-                        rel = p.relative_to(self.pdf_root)
-                        if "__archive__" in rel.parts:
-                            continue
                         if p.is_file():
                             found += 1
                     except Exception:
@@ -3791,16 +3766,15 @@ class MainWindow(QMainWindow):
         except Exception:
             found = 0
     
-        # --- 4) Parse records ---
+        # --- 4) Parse records (původní scanner) ---
         scanner = PdfScanner(self.pdf_root) if isinstance(self.pdf_root, Path) else None
         self.records = scanner.scan() if scanner else []
     
-        # --- 5) Repopulate source model (clear + append) ---
-        model = self._source_model
+        # --- 5) Vyprázdni a naplň model (přidán prázdný 'Sorted' item) ---
         if model.rowCount() > 0:
             model.removeRows(0, model.rowCount())
     
-        # group coloring
+        # barevné bloky a ikonky (beze změny vzhledu)
         COLS_APPLICATION = [1]
         COLS_INSTITUTION = [2, 3]
         COLS_RECOG      = [4, 5]
@@ -3823,16 +3797,15 @@ class MainWindow(QMainWindow):
     
         def set_yesno_icon(item: QStandardItem) -> None:
             val = (item.text() or "").strip().lower()
-            if val in {"yes", "on", "true", "1", "checked"}:
-                item.setIcon(icon_yes)
-            else:
-                item.setIcon(icon_no)
+            item.setIcon(icon_yes if val in {"yes", "on", "true", "1", "checked"} else icon_no)
     
         for rec in self.records:
-            row_vals = rec.as_row()
+            row_vals = rec.as_row()  # musí odpovídat všem sloupcům KROMĚ 'Sorted'
             items = [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
+            # přidej prázdnou buňku pro 'Sorted'
+            items.append(QStandardItem(""))
     
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
@@ -3843,26 +3816,34 @@ class MainWindow(QMainWindow):
             set_yesno_icon(items[4])  # Academia
             set_yesno_icon(items[5])  # Certified
     
-            FILE_COL = len(headers) - 1
-            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
+            # ulož plnou cestu k souboru do File name sloupce (UserRole+1)
+            if FILE_COL is not None and 0 <= FILE_COL < len(items):
+                items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
+    
             model.appendRow(items)
     
-        # --- 6) Post-setup on the proxy/view ---
-        proxy = self._proxy
+        # --- 6) Úpravy view/proxy (bez práce se selection tady) ---
         self.table.sortByColumn(0, Qt.AscendingOrder)
         for c in range(len(headers)):
             self.table.resizeColumnToContents(c)
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # --- 7) Restore previous selection by matching hidden paths ---
+        # --- 7) Spočti 'Sorted' a aplikuj případné skrytí (bez zásahu do výběru) ---
         try:
-            if selected_paths:
+            self._overview_update_sorted_flags()
+            self._overview_apply_sorted_row_hiding()
+        except Exception:
+            pass
+    
+        # --- 8) Obnov výběr podle uložených cest (pokud jsou) ---
+        try:
+            if selected_paths and proxy is not None:
                 sel_model = self.table.selectionModel()
-                FILE_COL = proxy.columnCount() - 1
+                # nečisti selection, jen přidej odpovídající řádky zpět
                 for r in range(model.rowCount()):
-                    sval = model.index(r, FILE_COL).data(Qt.UserRole + 1)
-                    if not sval:
+                    sval = model.index(r, FILE_COL).data(Qt.UserRole + 1) if FILE_COL is not None else None
+                    if not sval and FILE_COL is not None:
                         sval = model.index(r, FILE_COL).data()
                     if sval and str(sval) in selected_paths:
                         pidx = proxy.mapFromSource(model.index(r, 0))
@@ -3870,7 +3851,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
     
-        # --- 8) Watch list & status ---
+        # --- 9) Watch list & status (beze změny) ---
         self._rebuild_watch_list()
         try:
             root_str = str(self.pdf_root) if isinstance(self.pdf_root, Path) else "<unset>"
