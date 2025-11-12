@@ -962,28 +962,139 @@ class MainWindow(QMainWindow):
             for r in rows:
                 w.writerow(r)
                 
-    def _export_to_txt(self, filename: str, headers: list[str], rows: list[list[str]]) -> None:
-        from pathlib import Path
-        Path(filename).parent.mkdir(parents=True, exist_ok=True)
+    def _export_to_txt(self, path: str, headers: list[str], rows: list[list[str]]) -> None:
+        """
+        Rich TXT report shared by Overview & Sorted exports.
     
-        # spočti šířky sloupců (max 80)
-        cols = len(headers)
-        widths = [len(h) for h in headers]
-        for r in rows:
-            for i in range(cols):
-                if i < len(r):
-                    widths[i] = min(max(widths[i], len(str(r[i]))), 80)
+        Structure per record:
+          Title:  Institution — Candidate — [Board]  (fallback to File name)
+          Basic info:
+            - Board: ...
+            - Application Type: ...
+            - Institution Name: ...
+            - Candidate Name: ...
+            - Signature Date: ...
+            - File name: ...
+          Sections (only if data present):
+            Recognition:
+              - Academia Recognition: ...
+              - Certified Recognition: ...
+            Contact:
+              - Full Name: ...
+              - Email Address: ...
+              - Phone Number: ...
+              - Postal Address: ...
+            Curriculum:
+              - Syllabi Integration: ...
+              - Courses/Modules: ...
+            Evidence:
+              - Proof of ISTQB Certifications: ...
+              - Additional Info/Documents: ...
+            Links:
+              - University Links: ...
+        """
+        def _hmap(hs: list[str]) -> dict[str, int]:
+            return {h: i for i, h in enumerate(hs)}
     
-        def fmt_row(vals: list[str]) -> str:
-            return " | ".join(str(vals[i]).ljust(widths[i]) for i in range(cols))
+        def _get(row: list[str], h2i: dict[str, int], label: str, *alts: str) -> str:
+            for k in (label, *alts):
+                if k in h2i:
+                    idx = h2i[k]
+                    if 0 <= idx < len(row):
+                        val = row[idx]
+                        return "" if val is None else str(val)
+            return ""
     
-        sep = "-+-".join("-" * w for w in widths)
+        def _lines(val: str) -> list[str]:
+            if not val:
+                return []
+            s = str(val).replace("\r\n", "\n").replace("\r", "\n").strip()
+            if not s:
+                return []
+            return [ln.rstrip() for ln in s.split("\n")]
     
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(fmt_row(headers) + "\n")
-            f.write(sep + "\n")
-            for r in rows:
-                f.write(fmt_row(r) + "\n")
+        def _write_bullet(fh, label: str, value: str) -> bool:
+            ls = _lines(value)
+            if not ls:
+                return False
+            # first line
+            fh.write(f"- {label}: {ls[0]}\n")
+            # following lines as indented bullets
+            for ln in ls[1:]:
+                if ln.strip():
+                    fh.write(f"  {ln}\n")
+            return True
+    
+        # Section definitions by labels (must match header labels)
+        SECTIONS: list[tuple[str, list[str]]] = [
+            ("Recognition", [
+                "Academia Recognition",
+                "Certified Recognition",
+            ]),
+            ("Contact", [
+                "Full Name",
+                "Email Address",
+                "Phone Number",
+                "Postal Address",
+            ]),
+            ("Curriculum", [
+                "Syllabi Integration",
+                "Courses/Modules",
+            ]),
+            ("Evidence", [
+                "Proof of ISTQB Certifications",
+                "Additional Info/Documents",
+            ]),
+            ("Links", [
+                "University Links",
+            ]),
+        ]
+    
+        h2i = _hmap(headers)
+    
+        with open(path, "w", encoding="utf-8") as fh:
+            for idx, row in enumerate(rows, start=1):
+                board   = _get(row, h2i, "Board")
+                inst    = _get(row, h2i, "Institution Name")
+                cand    = _get(row, h2i, "Candidate Name")
+                app_t   = _get(row, h2i, "Application Type")
+                sigdate = _get(row, h2i, "Signature Date", "Signature date", "signature_date", "sigdate")
+                fname   = _get(row, h2i, "File name", "File Name", "Filename", "filename")
+    
+                # -------- Title --------
+                parts = []
+                if inst: parts.append(inst)
+                if cand: parts.append(cand)
+                if board: parts.append(f"[{board}]")
+                title = " — ".join(p for p in parts if p) or (fname or f"Record #{idx}")
+                fh.write(title + "\n")
+                fh.write("=" * len(title) + "\n\n")
+    
+                # -------- Basic info --------
+                fh.write("Basic info:\n")
+                _write_bullet(fh, "Board", board)
+                _write_bullet(fh, "Application Type", app_t)
+                _write_bullet(fh, "Institution Name", inst)
+                _write_bullet(fh, "Candidate Name", cand)
+                _write_bullet(fh, "Signature Date", sigdate)
+                _write_bullet(fh, "File name", fname)
+                fh.write("\n")
+    
+                # -------- Sections --------
+                for sec_title, labels in SECTIONS:
+                    # include section only if at least one label has data
+                    any_data = any(_get(row, h2i, lab) for lab in labels if lab in h2i)
+                    if not any_data:
+                        continue
+                    fh.write(f"{sec_title}:\n")
+                    for lab in labels:
+                        if lab in h2i:
+                            _write_bullet(fh, lab, _get(row, h2i, lab))
+                    fh.write("\n")
+    
+                # Separator between records
+                if idx < len(rows):
+                    fh.write("-----\n\n")
                 
     def _export_to_xlsx(self, filename: str, headers: list[str], rows: list[list[str]]) -> None:
         """
