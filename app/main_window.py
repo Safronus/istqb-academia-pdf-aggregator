@@ -1375,62 +1375,100 @@ class MainWindow(QMainWindow):
 
     # ----- Browser tab -----
     def _build_browser_tab(self) -> None:
-        splitter = QSplitter()
-        left = QWidget()
-        right = QWidget()
-        splitter.addWidget(left)
-        splitter.addWidget(right)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-
-        # Left: filtered tree for PDFs only
-        vleft = QVBoxLayout(left)
+        """
+        PDF Browser: reflow layout to vertical split (TOP: file tree, BOTTOM: details).
+        One-shot resize of main window to comfortably fit Name column + details.
+        """
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtWidgets import (
+            QSplitter, QWidget, QVBoxLayout, QTreeView, QFormLayout, QLabel,
+            QScrollArea, QFileSystemModel, QSizePolicy, QHeaderView
+        )
+    
+        # === Kořenový vertikální splitter: Nahoře strom, dole detail ===
+        vsplit = QSplitter(Qt.Vertical, self.browser_tab)
+    
+        # --- Nahoře: strom PDF ---
+        top_widget = QWidget(vsplit)
+        top_layout = QVBoxLayout(top_widget)
+    
         self.fs_model = QFileSystemModel(self)
         self.fs_model.setRootPath(str(self.pdf_root))
         self.fs_model.setNameFilterDisables(False)
         self.fs_model.setNameFilters(["*.pdf", "*.PDF"])
-
-        self.tree = QTreeView()
+    
+        self.tree = QTreeView(top_widget)
         self.tree.setModel(self.fs_model)
         self.tree.setRootIndex(self.fs_model.index(str(self.pdf_root)))
         self.tree.setSortingEnabled(True)
+        self.tree.setUniformRowHeights(True)
+    
+        # Necháme Qt spočítat šířku sloupce Name podle obsahu
+        header = self.tree.header()
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(80)
+        try:
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        except Exception:
+            header.setResizeMode(0, QHeaderView.ResizeToContents)
+    
+        # Signály zůstávají (žádná změna chování)
         self.tree.doubleClicked.connect(self._open_from_tree)
         self.tree.selectionModel().selectionChanged.connect(self._tree_selection_changed)
-        vleft.addWidget(self.tree)
-
-        # Right: details
-        vright = QVBoxLayout(right)
-        self.detail_form = QFormLayout()
-        self.lbl_board = QLabel("-")
-        self.lbl_known = QLabel("-")
-        self.lbl_app_type = QLabel("-")
-        self.lbl_inst = QLabel("-")
-        self.lbl_cand = QLabel("-")
-        self.lbl_acad = QLabel("-")
-        self.lbl_cert = QLabel("-")
-        self.lbl_contact = QLabel("-")
-        self.lbl_email = QLabel("-")
-        self.lbl_phone = QLabel("-")
-        self.lbl_postal = QLabel("-")
-        self.lbl_date = QLabel("-")
-        self.lbl_syllabi = QLabel("-")
-        self.lbl_courses = QLabel("-")
-        self.lbl_proof = QLabel("-")
-        self.lbl_links = QLabel("-")
-        self.lbl_additional = QLabel("-")
-        self.btn_open_right = QPushButton("Open PDF")
-        self.btn_open_right.clicked.connect(self._open_selected_detail)
-
+    
+        top_layout.addWidget(self.tree)
+    
+        # --- Dole: detail (ponechávám původní názvy lbl_* pro _update_detail_panel) ---
+        bottom_widget = QWidget(vsplit)
+        bottom_layout = QVBoxLayout(bottom_widget)
+    
+        scroll = QScrollArea(bottom_widget)
+        scroll.setWidgetResizable(True)
+        form_host = QWidget(scroll)
+        self.detail_form = QFormLayout(form_host)
+        self.detail_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.detail_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.detail_form.setFormAlignment(Qt.AlignTop)
+        self.detail_form.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
+    
+        def _mklabel() -> QLabel:
+            lab = QLabel("-")
+            lab.setWordWrap(True)
+            lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            lab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            return lab
+    
+        # Vytvoření labelů přesně podle toho, co očekává _update_detail_panel(...)
+        self.lbl_board = getattr(self, "lbl_board", _mklabel())
+        self.lbl_known = getattr(self, "lbl_known", _mklabel())
+        self.lbl_app_type = getattr(self, "lbl_app_type", _mklabel())
+        self.lbl_inst = getattr(self, "lbl_inst", _mklabel())
+        self.lbl_cand = getattr(self, "lbl_cand", _mklabel())
+        self.lbl_acad = getattr(self, "lbl_acad", _mklabel())
+        self.lbl_cert = getattr(self, "lbl_cert", _mklabel())
+        self.lbl_contact = getattr(self, "lbl_contact", _mklabel())
+        self.lbl_email = getattr(self, "lbl_email", _mklabel())
+        self.lbl_phone = getattr(self, "lbl_phone", _mklabel())
+        self.lbl_postal = getattr(self, "lbl_postal", _mklabel())
+        self.lbl_date = getattr(self, "lbl_date", _mklabel())
+        self.lbl_syllabi = getattr(self, "lbl_syllabi", _mklabel())
+        self.lbl_courses = getattr(self, "lbl_courses", _mklabel())
+        self.lbl_proof = getattr(self, "lbl_proof", _mklabel())
+        self.lbl_links = getattr(self, "lbl_links", _mklabel())
+        self.lbl_additional = getattr(self, "lbl_additional", _mklabel())
+        self.lbl_sorted_status = getattr(self, "lbl_sorted_status", _mklabel())
+    
+        # Sestavení formuláře (pořadí zachováno)
         self.detail_form.addRow("Board:", self.lbl_board)
-        self.detail_form.addRow("Board known:", self.lbl_known)
+        self.detail_form.addRow("Known Board:", self.lbl_known)
         self.detail_form.addRow("Application Type:", self.lbl_app_type)
-        self.detail_form.addRow("Institution:", self.lbl_inst)
-        self.detail_form.addRow("Candidate:", self.lbl_cand)
-        self.detail_form.addRow("Recognition Academia:", self.lbl_acad)
-        self.detail_form.addRow("Recognition Certified:", self.lbl_cert)
-        self.detail_form.addRow("Contact Name:", self.lbl_contact)
-        self.detail_form.addRow("Email:", self.lbl_email)
-        self.detail_form.addRow("Phone:", self.lbl_phone)
+        self.detail_form.addRow("Institution Name:", self.lbl_inst)
+        self.detail_form.addRow("Candidate Name:", self.lbl_cand)
+        self.detail_form.addRow("Academia Recognition:", self.lbl_acad)
+        self.detail_form.addRow("Certified Recognition:", self.lbl_cert)
+        self.detail_form.addRow("Full Name:", self.lbl_contact)
+        self.detail_form.addRow("Email Address:", self.lbl_email)
+        self.detail_form.addRow("Phone Number:", self.lbl_phone)
         self.detail_form.addRow("Postal Address:", self.lbl_postal)
         self.detail_form.addRow("Signature Date:", self.lbl_date)
         self.detail_form.addRow("Syllabi Integration:", self.lbl_syllabi)
@@ -1438,14 +1476,41 @@ class MainWindow(QMainWindow):
         self.detail_form.addRow("Proof of ISTQB Certifications:", self.lbl_proof)
         self.detail_form.addRow("University Links:", self.lbl_links)
         self.detail_form.addRow("Additional Info/Documents:", self.lbl_additional)
-        vright.addLayout(self.detail_form)
-        vright.addStretch(1)
-        vright.addWidget(self.btn_open_right)
-
-        container = QWidget()
-        lay = QVBoxLayout(container)
-        lay.addWidget(splitter)
-        self.browser_tab.setLayout(lay)
+        self.detail_form.addRow("Sorted Status:", self.lbl_sorted_status)
+    
+        scroll.setWidget(form_host)
+        bottom_layout.addWidget(scroll)
+    
+        # Přidej panely do splitteru
+        vsplit.addWidget(top_widget)
+        vsplit.addWidget(bottom_widget)
+        vsplit.setStretchFactor(0, 2)
+        vsplit.setStretchFactor(1, 1)
+        vsplit.setCollapsible(0, False)
+        vsplit.setCollapsible(1, False)
+    
+        # Zabalit do záložky
+        from PySide6.QtWidgets import QVBoxLayout as _VBL
+        outer = _VBL(self.browser_tab)
+        outer.addWidget(vsplit)
+    
+        # Jednorázově po načtení kořenového adresáře zvětšit okno podle šířky Name
+        def _widen_window_once():
+            try:
+                self.tree.resizeColumnToContents(0)
+                name_w = max(self.tree.sizeHintForColumn(0), header.sectionSize(0), 220)
+            except Exception:
+                name_w = 260
+            desired_width = int(name_w + 80)  # sloupec + okraje/scroll
+            desired_height = max(self.height(), 720)
+            if self.width() < desired_width:
+                self.resize(desired_width, desired_height)
+    
+        try:
+            self.fs_model.directoryLoaded.connect(lambda *_: QTimer.singleShot(0, _widen_window_once))
+        except Exception:
+            pass
+        QTimer.singleShot(0, _widen_window_once)
 
     # ----- Data -----
     def rescan(self) -> None:
