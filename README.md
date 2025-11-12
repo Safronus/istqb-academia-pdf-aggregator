@@ -2,6 +2,5 @@
 
 ---
 
-## Release 0.6b — 2025-11-12
-- **feat(overview):** Display Board name only for the first occurrence; subsequent rows with the same Board show an empty cell **visually**. Data remain intact for context actions and export.
-- Implementation is **render-only** via a delegate; no changes to models, actions, or export logic.
+## Release 0.6c — 2025-11-12
+- **fix(parser):** Remove a leading "/" from *Application Type* regardless of source (AcroForm or text) by sanitizing the value **immediately before return** in `parse_istqb_academia_application`. No other logic changed.
