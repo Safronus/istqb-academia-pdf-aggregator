@@ -178,6 +178,9 @@ class MainWindow(QMainWindow):
         self.rescan()
         self.rescan_sorted()
         self._init_fs_watcher()
+        
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._apply_global_sizing_once)
 
     # ----- Menu / actions -----
     def _build_menu(self) -> None:
@@ -1147,13 +1150,14 @@ class MainWindow(QMainWindow):
         """
         UI pro záložku 'Sorted PDFs': vlevo strom Board -> PDF, vpravo detailní formulář.
         Minimal-change:
-          - doplněny očekávané názvy polí (ed_inst_name/ed_cand_name/ed_rec_acad/ed_rec_cert/ed_sigdate + aliasy),
-          - přidány jemné korekce velikostí (splitter, autosize stromu, kompaktní výška PTE),
+          - větší levý panel (Board / PDF),
+          - větší editační pole (QLineEdit vyšší, QPlainTextEdit vyšší),
+          - form layout dovolí růst polí (AllNonFixedFieldsGrow),
           - zachováno tlačítko 'Export…' (volá export_sorted_db()).
         """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
-            QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton
+            QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy
         )
         from PySide6.QtCore import Qt, QTimer
     
@@ -1175,31 +1179,42 @@ class MainWindow(QMainWindow):
         self.form_sorted = QFormLayout()
         self.form_sorted.setFormAlignment(Qt.AlignTop)
         self.form_sorted.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
+        # dovol růst polí do šířky i výšky, kde to dává smysl
+        self.form_sorted.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    
+        def _line() -> QLineEdit:
+            le = QLineEdit()
+            le.setMinimumHeight(36)  # vyšší editace
+            le.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            return le
     
         # Jednořádková pole (názvy podle toho, co používají ostatní metody)
-        self.ed_board = QLineEdit()
-        self.ed_app_type = QLineEdit()
-        self.ed_inst_name = QLineEdit()    # očekáváno ve zbytku kódu
-        self.ed_cand_name = QLineEdit()    # očekáváno ve zbytku kódu
-        self.ed_rec_acad = QLineEdit()     # očekáváno (alias k dřívějšímu ed_acad)
-        self.ed_rec_cert = QLineEdit()     # očekáváno (alias k dřívějšímu ed_cert)
-        self.ed_fullname = QLineEdit()
-        self.ed_email = QLineEdit()
-        self.ed_phone = QLineEdit()
-        self.ed_sigdate = QLineEdit()      # očekáváno _sorted_set_editable
-        self.ed_filename = QLineEdit()
+        self.ed_board = _line()
+        self.ed_app_type = _line()
+        self.ed_inst_name = _line()    # očekáváno ve zbytku kódu
+        self.ed_cand_name = _line()    # očekáváno ve zbytku kódu
+        self.ed_rec_acad = _line()     # očekáváno (alias k dřívějšímu ed_acad)
+        self.ed_rec_cert = _line()     # očekáváno (alias k dřívějšímu ed_cert)
+        self.ed_fullname = _line()
+        self.ed_email = _line()
+        self.ed_phone = _line()
+        self.ed_sigdate = _line()      # očekáváno _sorted_set_editable
+        self.ed_filename = _line()
     
-        # Víceřádková pole – kompaktní výšky (jemná korekce)
-        self.ed_address = QPlainTextEdit()
-        self.ed_syllabi = QPlainTextEdit()
-        self.ed_courses = QPlainTextEdit()
-        self.ed_proof = QPlainTextEdit()
-        self.ed_links = QPlainTextEdit()
-        self.ed_additional = QPlainTextEdit()
-        for pte in (self.ed_address, self.ed_syllabi, self.ed_courses,
-                    self.ed_proof, self.ed_links, self.ed_additional):
-            pte.setMinimumHeight(56)  # čitelná výška
-            pte.setMaximumHeight(120) # nepřerůstá; víc obsahu = scroll uvnitř pole
+        # Víceřádková pole – výrazně větší (více se vejde bez scrollu)
+        def _pte() -> QPlainTextEdit:
+            p = QPlainTextEdit()
+            p.setMinimumHeight(96)
+            p.setMaximumHeight(220)
+            p.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            return p
+    
+        self.ed_address = _pte()
+        self.ed_syllabi = _pte()
+        self.ed_courses = _pte()
+        self.ed_proof = _pte()
+        self.ed_links = _pte()
+        self.ed_additional = _pte()
     
         # ---- Kompatibilní aliasy (jen jmenné mosty) ----
         self.ed_inst = self.ed_inst_name
@@ -1264,30 +1279,31 @@ class MainWindow(QMainWindow):
         # Osazení splitteru a layoutu
         self.split_sorted.addWidget(self.tree_sorted)
         self.split_sorted.addWidget(right)
-        self.split_sorted.setStretchFactor(0, 1)
-        self.split_sorted.setStretchFactor(1, 2)
+        # Zvýhodni levý panel – strom (větší Board / PDF)
+        self.split_sorted.setStretchFactor(0, 2)
+        self.split_sorted.setStretchFactor(1, 1)
     
         layout.addWidget(self.split_sorted, 1)
         self.sorted_tab.setLayout(layout)
     
-        # ===== Jemné sizing doladění po vystavění UI (po event loopu) =====
-        def _apply_sorted_sizes():
+        # Jemné sizing doladění po vystavění UI
+        def _apply_sorted_sizes_local():
             try:
-                # rozumné počáteční rozměry okna (není závazné – jen pokud je menší)
-                rec_w, rec_h = 1200, 820
-                if self.width() < rec_w or self.height() < rec_h:
-                    self.resize(max(self.width(), rec_w), max(self.height(), rec_h))
+                # autosize sloupce stromu + malá rezerva
+                self.tree_sorted.resizeColumnToContents(0)
+                extra = 80
+                curr = self.tree_sorted.columnWidth(0)
+                if curr > 0:
+                    self.tree_sorted.setColumnWidth(0, curr + extra)
             except Exception:
                 pass
             try:
-                # autosize sloupce stromu + výchozí poměr splitteru
-                self.tree_sorted.resizeColumnToContents(0)
-                total_w = max(self.width(), 1200)
-                self.split_sorted.setSizes([int(total_w * 0.48), int(total_w * 0.52)])
+                total_w = max(self.width(), 1400)
+                self.split_sorted.setSizes([int(total_w * 0.65), int(total_w * 0.35)])
             except Exception:
                 pass
     
-        QTimer.singleShot(0, _apply_sorted_sizes)
+        QTimer.singleShot(0, _apply_sorted_sizes_local)
         
     def export_sorted_db(self) -> None:
         """
@@ -2347,18 +2363,18 @@ class MainWindow(QMainWindow):
         
     def showEvent(self, event) -> None:
         """
-        Apply global sizing once on the first show.
-        Minimal-change: no logic/data changes; only visual sizing hints.
+        Jednorázové globální sizing hinty při prvním zobrazení okna.
+        Qt volá showEvent automaticky. Zvětší okno alespoň o 50 % na šířku i výšku,
+        ale s respektem k dostupnému pracovního prostoru obrazovky.
         """
         try:
-            super(type(self), self).showEvent(event)
+            super().showEvent(event)
         except Exception:
             try:
-                super().showEvent(event)  # in case MRO differs
+                super(type(self), self).showEvent(event)
             except Exception:
                 pass
     
-        # Run only once
         if getattr(self, "_sizing_applied", False):
             return
     
@@ -2369,63 +2385,72 @@ class MainWindow(QMainWindow):
             
     def _apply_global_sizing_once(self) -> None:
         """
-        Global sizing orchestrator:
-          - ensure recommended minimum main window size (if currently smaller),
-          - fit Overview table columns,
-          - fit Sorted PDFs tree / splitter.
+        Orchestrátor fit-to-data:
+          1) zvětšení hlavního okna min. o 50 % (s limitem dle obrazovky),
+          2) lokální fit v Overview,
+          3) lokální fit ve Sorted PDFs,
+          4) lokální fit v PDF Browseru (pokud existuje helper),
+          5) zopakování po event loopu.
         """
+        from PySide6.QtGui import QGuiApplication
         from PySide6.QtCore import QTimer
     
-        # 1) Main window recommended minimum (only upscale if needed)
-        rec_w, rec_h = 1280, 900
+        # 1) Zvětšení okna min. o 50 %; respektovat dostupný prostor obrazovky
         try:
-            if self.width() < rec_w or self.height() < rec_h:
-                self.resize(max(self.width(), rec_w), max(self.height(), rec_h))
+            cw, ch = max(self.width(), 800), max(self.height(), 600)
+            desired_w = int(cw * 1.5)
+            desired_h = int(ch * 1.5)
+    
+            scr = QGuiApplication.primaryScreen()
+            if scr:
+                avail = scr.availableGeometry()
+                max_w = int(avail.width() * 0.95)
+                max_h = int(avail.height() * 0.95)
+                desired_w = min(desired_w, max_w)
+                desired_h = min(desired_h, max_h)
+    
+            # Nepoužij menší než aktuální
+            desired_w = max(desired_w, cw)
+            desired_h = max(desired_h, ch)
+            self.resize(desired_w, desired_h)
         except Exception:
             pass
     
-        # 2) Overview autosize
-        try:
-            self._apply_overview_sizes()
-        except Exception:
-            pass
+        # 2–4) Lokální fit helpery
+        for fn in (getattr(self, "_apply_overview_sizes", None),
+                   getattr(self, "_apply_sorted_sizes", None),
+                   getattr(self, "_apply_browser_sizes", None)):
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
     
-        # 3) Sorted PDFs autosize
-        try:
-            self._apply_sorted_sizes()
-        except Exception:
-            pass
-    
-        # 4) Re-run once after event loop to catch late model updates
+        # 5) Po event loopu zopakuj (kvůli opožděnému plnění modelů)
         def _post():
-            try:
-                self._apply_overview_sizes()
-            except Exception:
-                pass
-            try:
-                self._apply_sorted_sizes()
-            except Exception:
-                pass
+            for fn in (getattr(self, "_apply_overview_sizes", None),
+                       getattr(self, "_apply_sorted_sizes", None),
+                       getattr(self, "_apply_browser_sizes", None)):
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        pass
         QTimer.singleShot(0, _post)
         
     def _apply_overview_sizes(self) -> None:
         """
-        Fit Overview table to its data without changing behavior.
-        Assumes self.table is QTableView with a proxy model.
+        Fit tabulky v Overview k aktuálním datům.
+        Nemění výběry, sort ani filtry; jen rozměry sloupců a roztažení posledního.
         """
         from PySide6.QtCore import QTimer
-        try:
-            view = self.table
-        except Exception:
-            return
-        if view is None:
+        view = getattr(self, "table", None)
+        if not view:
             return
         try:
             hh = view.horizontalHeader()
             hh.setStretchLastSection(True)
-            # Try mild resize now…
             view.resizeColumnsToContents()
-            # …and again after the event loop (in case model just updated)
             QTimer.singleShot(0, view.resizeColumnsToContents)
         except Exception:
             pass
@@ -2453,15 +2478,13 @@ class MainWindow(QMainWindow):
         except Exception:
             cols = 1
     
-        # Pro jistotu nastavíme ResizeToContents na všech sloupcích, které existují
+        # Nastav ResizeToContents na všech sloupcích, a hned je přepočti
         for c in range(cols):
             try:
-                # Qt6 API
                 header.setSectionResizeMode(c, QHeaderView.ResizeToContents)
             except Exception:
-                # Qt5 fallback
                 try:
-                    header.setResizeMode(c, QHeaderView.ResizeToContents)
+                    header.setResizeMode(c, QHeaderView.ResizeToContents)  # Qt5 fallback
                 except Exception:
                     pass
             try:
@@ -2478,11 +2501,10 @@ class MainWindow(QMainWindow):
                     pass
         QTimer.singleShot(0, _second_pass)
     
-        # Napojení na directoryLoaded (jen jednou), aby se refitlo po načtení adresáře
+        # Napojení na directoryLoaded (jen jednou)
         if not getattr(self, "_browser_sizes_connected", False):
             try:
                 def _on_loaded(*_):
-                    # malý odklad a re-fit, protože FS model finishuje později
                     QTimer.singleShot(0, self._apply_browser_sizes)
                 fs_model.directoryLoaded.connect(_on_loaded)
                 self._browser_sizes_connected = True
@@ -2491,28 +2513,31 @@ class MainWindow(QMainWindow):
         
     def _apply_sorted_sizes(self) -> None:
         """
-        Fit Sorted PDFs parts without altering logic.
-        - autosize tree column,
-        - gentle splitter ratio (≈48% : 52%),
-        - keep previously set compact PTE heights (if any).
+        Fit ve "Sorted PDFs": zvětšený levý panel (Board / PDF) a sloupec,
+        jemný poměr splitteru ~65 % : 35 %, autosize sloupce a malé navýšení šířky.
         """
         from PySide6.QtCore import QTimer
-        try:
-            tree = self.tree_sorted
-            splitter = self.split_sorted
-        except Exception:
-            return
     
-        if tree is not None:
+        tree = getattr(self, "tree_sorted", None)
+        splitter = getattr(self, "split_sorted", None)
+    
+        if tree:
             try:
                 tree.resizeColumnToContents(0)
+                # po prvním autosize lehce přidej rezervu
+                extra = 80
+                curr = tree.columnWidth(0)
+                if curr > 0:
+                    tree.setColumnWidth(0, curr + extra)
                 QTimer.singleShot(0, lambda: tree.resizeColumnToContents(0))
             except Exception:
                 pass
     
-        if splitter is not None:
+        if splitter:
             try:
-                total_w = max(getattr(self, "width", lambda: 1200)(), 1200)
-                splitter.setSizes([int(total_w * 0.48), int(total_w * 0.52)])
+                total_w = max(getattr(self, "width", lambda: 1400)(), 1400)
+                # ~65 % vlevo (strom), ~35 % vpravo (formulář)
+                splitter.setSizes([int(total_w * 0.65), int(total_w * 0.35)])
             except Exception:
                 pass
+            
