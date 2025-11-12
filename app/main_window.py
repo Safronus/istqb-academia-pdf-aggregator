@@ -426,7 +426,7 @@ class MainWindow(QMainWindow):
             QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
             QPushButton, QTableView, QToolButton, QMenu
         )
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QTimer
         from PySide6.QtWidgets import QStyle
     
         layout = QVBoxLayout()
@@ -441,7 +441,6 @@ class MainWindow(QMainWindow):
         # jemné vizuální zvýraznění (dark theme safe)
         self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
         self.btn_unparsed.clicked.connect(self.show_unparsed_report)
-        
     
         # Export button (zůstává z 0.5a)
         self.btn_export = QToolButton(self)
@@ -452,9 +451,8 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.btn_export)
     
         self.board_combo = QComboBox()
+        # Naplnění přes _rebuild_board_combo() – zde zatím jen placeholder "All"
         self.board_combo.addItem("All")
-        for b in sorted(KNOWN_BOARDS):
-            self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
         self.search_edit = QLineEdit()
@@ -515,9 +513,9 @@ class MainWindow(QMainWindow):
             self._proxy.setSourceModel(self._source_model)
             self._proxy.setDynamicSortFilter(True)
             self.table.setModel(self._proxy)
-            
+    
         self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
-        
+    
         # Skryj Eligibility sloupce už zde
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
@@ -542,6 +540,89 @@ class MainWindow(QMainWindow):
     
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
+    
+        # === NOVÉ: napojení rebuildů Board comboboxu na změny dat ===
+        def _schedule_rebuild(*_):
+            QTimer.singleShot(0, self._rebuild_board_combo)
+    
+        if not getattr(self, "_board_combo_hooks", False):
+            try:
+                self._proxy.modelReset.connect(_schedule_rebuild)
+                self._proxy.rowsInserted.connect(_schedule_rebuild)
+                self._proxy.rowsRemoved.connect(_schedule_rebuild)
+                self._proxy.dataChanged.connect(_schedule_rebuild)
+            except Exception:
+                pass
+            self._board_combo_hooks = True
+    
+        # První naplnění dle aktuálních dat
+        self._rebuild_board_combo()
+        
+    def _rebuild_board_combo(self) -> None:
+        """
+        Naplní Board combobox dvěma sekcemi:
+          - nejdřív boardy přítomné v aktuální Overview tabulce (po všech filtrech),
+          - oddělovač,
+          - zbývající boardy z KNOWN_BOARDS (abecedně).
+        'All' zůstává první. Zachová aktuální volbu, pokud je k dispozici.
+        """
+        from PySide6.QtCore import Qt
+    
+        combo = getattr(self, "board_combo", None)
+        proxy = getattr(self, "_proxy", None)
+        source = getattr(self, "_source_model", None)
+        if combo is None or proxy is None or source is None:
+            return
+    
+        # zapamatuj si výběr
+        current_text = combo.currentText() if combo.count() else "All"
+    
+        # sesbírej present boards z PROXY pohledu (sloupec 0 = Board)
+        present = set()
+        try:
+            for r in range(proxy.rowCount()):
+                pidx = proxy.index(r, 0)
+                if not pidx.isValid():
+                    continue
+                sidx = proxy.mapToSource(pidx)
+                val = source.data(sidx, Qt.DisplayRole)
+                if val:
+                    present.add(str(val))
+        except Exception:
+            # fallback: vezmi vše ze source
+            try:
+                for r in range(source.rowCount()):
+                    val = source.index(r, 0).data(Qt.DisplayRole)
+                    if val:
+                        present.add(str(val))
+            except Exception:
+                pass
+    
+        present_sorted = sorted(present)
+        remaining_sorted = [b for b in sorted(KNOWN_BOARDS) if b not in present]
+    
+        # naplň combobox
+        try:
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("All")
+            for b in present_sorted:
+                combo.addItem(b)
+            if remaining_sorted:
+                # separator mezi sekce
+                combo.insertSeparator(combo.count())
+                for b in remaining_sorted:
+                    combo.addItem(b)
+    
+            # obnov výběr, pokud existuje; jinak nech "All"
+            for i in range(combo.count()):
+                if combo.itemText(i) == current_text:
+                    combo.setCurrentIndex(i)
+                    break
+            else:
+                combo.setCurrentIndex(0)
+        finally:
+            combo.blockSignals(False)
 
     def _enumerate_all_pdfs(self) -> list[str]:
         """
