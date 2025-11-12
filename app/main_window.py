@@ -291,22 +291,42 @@ class MainWindow(QMainWindow):
 
     # ----- Overview tab -----
     def _build_overview_tab(self) -> None:
+        from PySide6.QtWidgets import (
+            QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
+            QPushButton, QTableView, QToolButton
+        )
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QStyle
+    
         layout = QVBoxLayout()
         controls = QHBoxLayout()
-
+    
+        # --- NEW: Export button (ikonové) ---
+        self.btn_export = QToolButton(self)
+        self.btn_export.setToolTip("Export…")
+        self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        self.btn_export.setAutoRaise(True)
+        self.btn_export.clicked.connect(self.on_export_overview)
+        controls.addWidget(self.btn_export)
+    
+        # Board filter (beze změny logiky)
         self.board_combo = QComboBox()
         self.board_combo.addItem("All")
         for b in sorted(KNOWN_BOARDS):
             self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
-
+    
+        # Fulltext search (beze změny)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
-
+    
+        # Open PDF (beze změny)
         self.open_btn = QPushButton("Open PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
-
+    
+        # Rozmístění ovládacích prvků (zachováno)
+        controls.addSpacing(8)
         controls.addWidget(QLabel("Board:"))
         controls.addWidget(self.board_combo, 1)
         controls.addSpacing(12)
@@ -314,9 +334,10 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.search_edit, 4)
         controls.addSpacing(12)
         controls.addWidget(self.open_btn)
-
+    
         layout.addLayout(controls)
-
+    
+        # Tabulka Overview (beze změny parametrů)
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
@@ -325,9 +346,389 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
-
+    
+        # Kontextové menu pro případ, že už ho máš napojené (nepřepisujeme)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+    
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
+
+    def _collect_available_boards(self) -> list[str]:
+        """
+        Získá boardy, pro které skutečně existují PDF ve složce PDF/<board>/...
+        Ignoruje podsložku '__archive__'. Pokud není pdf_root dostupný,
+        vrátí unikátní boardy z již naparsovaných self.records.
+        """
+        from pathlib import Path
+        boards: set[str] = set()
+    
+        root = getattr(self, "pdf_root", None)
+        if isinstance(root, Path) and root.exists():
+            try:
+                # první úroveň podsložek pod PDF je board
+                for sub in root.iterdir():
+                    if not sub.is_dir():
+                        continue
+                    if sub.name == "__archive__":
+                        continue
+                    # zkontroluj aspoň jedno .pdf uvnitř (rekurzivně)
+                    found_pdf = False
+                    for p in sub.rglob("*.pdf"):
+                        try:
+                            rel = p.relative_to(root)
+                            if "__archive__" in rel.parts:
+                                continue
+                            found_pdf = True
+                            break
+                        except Exception:
+                            continue
+                    if found_pdf:
+                        boards.add(sub.name)
+            except Exception:
+                pass
+    
+        if not boards:
+            try:
+                for r in getattr(self, "records", []):
+                    if getattr(r, "board", None):
+                        boards.add(r.board)
+            except Exception:
+                pass
+    
+        return sorted(boards)
+    
+    def on_export_overview(self) -> None:
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QCheckBox, QLabel,
+            QComboBox, QPushButton, QListWidget, QListWidgetItem, QScrollArea,
+            QWidget, QGridLayout, QDialogButtonBox, QFileDialog, QMessageBox
+        )
+        from PySide6.QtCore import Qt
+        from datetime import datetime
+        import os
+    
+        # --- definice polí (label -> klíč v rec) ---
+        # soulad s Overview pořadím
+        FIELDS: list[tuple[str, str]] = [
+            ("Board", "board"),
+            ("Application Type", "application_type"),
+            ("Institution Name", "institution_name"),
+            ("Candidate Name", "candidate_name"),
+            ("Academia Recognition", "recognition_academia"),
+            ("Certified Recognition", "recognition_certified"),
+            ("Full Name", "contact_full_name"),
+            ("Email Address", "contact_email"),
+            ("Phone Number", "contact_phone"),
+            ("Postal Address", "contact_postal_address"),
+            # Eligibility (v Overview skryté, ale exportovatelně dostupné)
+            ("Syllabi Integration", "syllabi_integration_description"),
+            ("Courses/Modules", "courses_modules_list"),
+            ("Proof of ISTQB Certifications", "proof_of_istqb_certifications"),
+            ("University Links", "university_links"),
+            ("Additional Info/Documents", "additional_information_documents"),
+            ("Signature Date", "signature_date"),
+            ("File name", "file_name"),
+        ]
+    
+        # --- dialog ---
+        class ExportDialog(QDialog):
+            def __init__(self, boards_avail: list[str], parent=None):
+                super().__init__(parent)
+                self.setWindowTitle("Export options")
+                main = QVBoxLayout(self)
+    
+                # --- Formáty ---
+                grp_fmt = QGroupBox("Export formats")
+                fmt_lay = QHBoxLayout(grp_fmt)
+                self.chk_csv = QCheckBox("CSV")
+                self.chk_xlsx = QCheckBox("XLSX")
+                self.chk_txt = QCheckBox("TXT (formatted)")
+                # default: CSV + TXT zapnuto, XLSX vypnuto (bez nové závislosti)
+                self.chk_csv.setChecked(True)
+                self.chk_txt.setChecked(True)
+                self.chk_xlsx.setChecked(False)
+                fmt_lay.addWidget(self.chk_csv)
+                fmt_lay.addWidget(self.chk_xlsx)
+                fmt_lay.addWidget(self.chk_txt)
+                main.addWidget(grp_fmt)
+    
+                # --- Boardy ---
+                grp_b = QGroupBox("Boards to export")
+                b_lay = QGridLayout(grp_b)
+                self.all_boards = QCheckBox("All")
+                self.all_boards.setChecked(True)
+                b_lay.addWidget(self.all_boards, 0, 0, 1, 2)
+    
+                self.cmb_board = QComboBox()
+                self.cmb_board.addItems(boards_avail)
+                self.btn_add = QPushButton("Add")
+                b_lay.addWidget(QLabel("Board:"), 1, 0)
+                b_lay.addWidget(self.cmb_board, 1, 1)
+                b_lay.addWidget(self.btn_add, 1, 2)
+    
+                self.list_sel = QListWidget()
+                b_lay.addWidget(QLabel("Selected boards:"), 2, 0, 1, 3)
+                b_lay.addWidget(self.list_sel, 3, 0, 1, 3)
+                self.btn_remove = QPushButton("Remove selected")
+                b_lay.addWidget(self.btn_remove, 4, 0, 1, 3)
+    
+                def _toggle_board_ui():
+                    enabled = not self.all_boards.isChecked()
+                    self.cmb_board.setEnabled(enabled)
+                    self.btn_add.setEnabled(enabled)
+                    self.list_sel.setEnabled(enabled)
+                    self.btn_remove.setEnabled(enabled)
+    
+                self.all_boards.toggled.connect(_toggle_board_ui)
+                self.btn_add.clicked.connect(lambda: self._add_board())
+                self.btn_remove.clicked.connect(lambda: self._remove_sel())
+                _toggle_board_ui()
+                main.addWidget(grp_b)
+    
+                # --- Pole ---
+                grp_fields = QGroupBox("Fields to export")
+                f_lay = QVBoxLayout(grp_fields)
+                self.chk_all_fields = QCheckBox("Select all")
+                self.chk_all_fields.setChecked(True)
+                f_lay.addWidget(self.chk_all_fields)
+    
+                self.scroll = QScrollArea()
+                self.scroll.setWidgetResizable(True)
+                cont = QWidget()
+                cont_lay = QVBoxLayout(cont)
+                self.field_checks: list[tuple[str, str, QCheckBox]] = []
+                for label, key in FIELDS:
+                    cb = QCheckBox(label)
+                    cb.setChecked(True)
+                    self.field_checks.append((label, key, cb))
+                    cont_lay.addWidget(cb)
+                cont_lay.addStretch(1)
+                self.scroll.setWidget(cont)
+                f_lay.addWidget(self.scroll)
+    
+                def _toggle_all():
+                    state = self.chk_all_fields.isChecked()
+                    for _, _, cb in self.field_checks:
+                        cb.setChecked(state)
+                self.chk_all_fields.toggled.connect(_toggle_all)
+                main.addWidget(grp_fields)
+    
+                # --- tlačítka ---
+                btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+                main.addWidget(btns)
+                btns.accepted.connect(self._accept)
+                btns.rejected.connect(self.reject)
+    
+                self.result = None  # dict result
+    
+            def _add_board(self):
+                txt = self.cmb_board.currentText().strip()
+                if not txt:
+                    return
+                # nepřidávej duplicitně
+                for i in range(self.list_sel.count()):
+                    if self.list_sel.item(i).text() == txt:
+                        return
+                self.list_sel.addItem(QListWidgetItem(txt))
+    
+            def _remove_sel(self):
+                for it in self.list_sel.selectedItems():
+                    self.list_sel.takeItem(self.list_sel.row(it))
+    
+            def _accept(self):
+                # formáty
+                fmts = []
+                if self.chk_csv.isChecked(): fmts.append("csv")
+                if self.chk_xlsx.isChecked(): fmts.append("xlsx")
+                if self.chk_txt.isChecked(): fmts.append("txt")
+                if not fmts:
+                    QMessageBox.warning(self, "Export", "Select at least one format.")
+                    return
+    
+                # boardy
+                boards = None
+                if not self.all_boards.isChecked():
+                    boards = []
+                    for i in range(self.list_sel.count()):
+                        boards.append(self.list_sel.item(i).text())
+                    if not boards:
+                        QMessageBox.warning(self, "Export", "Add at least one board or check 'All'.")
+                        return
+    
+                # pole
+                fields = [(lab, key) for (lab, key, cb) in self.field_checks if cb.isChecked()]
+                if not fields:
+                    QMessageBox.warning(self, "Export", "Select at least one field.")
+                    return
+    
+                self.result = {
+                    "formats": fmts,
+                    "boards": boards,  # None = All
+                    "fields": fields,  # list of (label, key)
+                }
+                self.accept()
+    
+        # připrav data pro dialog
+        boards_avail = self._collect_available_boards()
+        dlg = ExportDialog(boards_avail, self)
+        if dlg.exec_() != QDialog.Accepted or dlg.result is None:
+            return
+    
+        formats: list[str] = dlg.result["formats"]
+        boards_sel: list[str] | None = dlg.result["boards"]
+        fields: list[tuple[str, str]] = dlg.result["fields"]
+    
+        # výběr cesty (jeden dialog – základní soubor, ostatní formáty vedle)
+        # navržený název podle času a případných boardů
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        suffix = "all" if boards_sel is None else ("+".join(boards_sel[:3]) + ("+more" if boards_sel and len(boards_sel) > 3 else ""))
+        base_name = f"export-{suffix}-{ts}".replace(" ", "_")
+        # defaultní filtr podle první volby
+        first_ext = formats[0]
+        default_name = f"{base_name}.{first_ext}"
+    
+        path, _ = QFileDialog.getSaveFileName(self, "Save export as…", default_name,
+                                              "All files (*.*)")
+        if not path:
+            return
+    
+        base_no_ext, _sep, _ext = path.rpartition(".")
+        if not base_no_ext:
+            # uživatel nedal příponu → použij base_name z dialogu
+            base_no_ext = path
+    
+        # vyber záznamy dle boards
+        records = list(getattr(self, "records", []))
+        if boards_sel is not None:
+            wh = set(boards_sel)
+            records = [r for r in records if (getattr(r, "board", None) in wh)]
+    
+        # připrav řádky (jen vybraná pole)
+        # každý řádek → list hodnot podle (label, key) pořadí
+        rows: list[list[str]] = []
+        headers = [lab for (lab, _key) in fields]
+    
+        def _get_val(rec, key: str) -> str:
+            if key == "file_name":
+                try:
+                    return rec.path.name if getattr(rec, "path", None) else ""
+                except Exception:
+                    return ""
+            v = getattr(rec, key, None)
+            return "" if v is None else str(v)
+    
+        for rec in records:
+            rows.append([_get_val(rec, key) for (_lab, key) in fields])
+    
+        # exporty
+        ok, errs = [], []
+    
+        if "csv" in formats:
+            try:
+                fn = base_no_ext + ".csv"
+                self._export_to_csv(fn, headers, rows)
+                ok.append(fn)
+            except Exception as e:
+                errs.append(f"CSV: {e}")
+    
+        if "txt" in formats:
+            try:
+                fn = base_no_ext + ".txt"
+                self._export_to_txt(fn, headers, rows)
+                ok.append(fn)
+            except Exception as e:
+                errs.append(f"TXT: {e}")
+    
+        if "xlsx" in formats:
+            try:
+                fn = base_no_ext + ".xlsx"
+                self._export_to_xlsx(fn, headers, rows)
+                ok.append(fn)
+            except ImportError:
+                errs.append("XLSX: optional dependency 'openpyxl' not installed.")
+            except Exception as e:
+                errs.append(f"XLSX: {e}")
+    
+        # výsledek
+        msg = []
+        if ok:   msg.append("Exported:\n- " + "\n- ".join(ok))
+        if errs: msg.append("\nIssues:\n- " + "\n- ".join(errs))
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Export", "\n".join(msg))
+        try:
+            self.statusBar().showMessage("Export done.")
+        except Exception:
+            pass
+
+    def _export_to_csv(self, filename: str, headers: list[str], rows: list[list[str]]) -> None:
+        import csv
+        from pathlib import Path
+        Path(filename).parent.mkdir(parents=True, exist_ok=True)
+        with open(filename, "w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(headers)
+            for r in rows:
+                w.writerow(r)
+                
+    def _export_to_txt(self, filename: str, headers: list[str], rows: list[list[str]]) -> None:
+        from pathlib import Path
+        Path(filename).parent.mkdir(parents=True, exist_ok=True)
+    
+        # spočti šířky sloupců (max 80)
+        cols = len(headers)
+        widths = [len(h) for h in headers]
+        for r in rows:
+            for i in range(cols):
+                if i < len(r):
+                    widths[i] = min(max(widths[i], len(str(r[i]))), 80)
+    
+        def fmt_row(vals: list[str]) -> str:
+            return " | ".join(str(vals[i]).ljust(widths[i]) for i in range(cols))
+    
+        sep = "-+-".join("-" * w for w in widths)
+    
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(fmt_row(headers) + "\n")
+            f.write(sep + "\n")
+            for r in rows:
+                f.write(fmt_row(r) + "\n")
+                
+    def _export_to_xlsx(self, filename: str, headers: list[str], rows: list[list[str]]) -> None:
+        """
+        XLSX export přes optional dependency 'openpyxl'.
+        Bez přidávání závislostí do projektu – pokud není k dispozici, vyhodí ImportError.
+        """
+        from pathlib import Path
+        Path(filename).parent.mkdir(parents=True, exist_ok=True)
+    
+        try:
+            import openpyxl
+            from openpyxl.styles import Font
+        except Exception as e:
+            raise ImportError("openpyxl not available") from e
+    
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Export"
+    
+        ws.append(headers)
+        # tučný header
+        bold = Font(bold=True)
+        for c in range(1, len(headers) + 1):
+            ws.cell(row=1, column=c).font = bold
+    
+        for r in rows:
+            ws.append(r)
+    
+        # auto šířky (jednoduše dle max délky)
+        for col_idx, head in enumerate(headers, start=1):
+            max_len = len(head)
+            for row in rows:
+                if col_idx - 1 < len(row):
+                    max_len = max(max_len, len(str(row[col_idx - 1])))
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = min(max_len + 2, 80)
+    
+        wb.save(filename)
 
     def _filter_board(self, txt: str) -> None:
         proxy = self.table.model()
