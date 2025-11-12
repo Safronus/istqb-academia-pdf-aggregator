@@ -45,9 +45,33 @@ class SortedDb:
             self._touch()
 
     def save(self) -> None:
+        """
+        Uloží obsah JSON DB na disk. Zároveň bezpečně serializuje
+        nativní Python objekty, které JSON neumí (např. Path).
+        Minimal-change: pouze serializace při zápisu, struktura self.doc se jinak nemění.
+        """
+        from pathlib import Path as _Path
+        from dataclasses import is_dataclass as _is_dc, asdict as _asdict
+    
+        def _default(o):
+            # Nejčastější případ: pathlib.Path
+            if isinstance(o, _Path):
+                return str(o)
+            # Případné dataclass zůstanou čitelné v JSON
+            if _is_dc(o):
+                return _asdict(o)
+            # Konzervativní doplněk: set -> list (pro jistotu)
+            if isinstance(o, set):
+                return list(o)
+            # Poslední záchrana: převod na str (minimal-change)
+            return str(o)
+    
         self.doc["updated"] = datetime.utcnow().isoformat()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db_path.write_text(json.dumps(self.doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.db_path.write_text(
+            json.dumps(self.doc, ensure_ascii=False, indent=2, default=_default),
+            encoding="utf-8",
+        )
 
     def _touch(self) -> None:
         self.save()
