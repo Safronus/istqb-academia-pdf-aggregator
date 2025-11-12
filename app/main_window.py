@@ -14,6 +14,185 @@ from PySide6.QtWidgets import (
 from .pdf_scanner import PdfScanner, PdfRecord
 from .istqb_boards import KNOWN_BOARDS
 
+# --- vlož do app/main_window.py (nad definici MainWindow) ---
+from typing import Optional, Dict, List
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QModelIndex
+
+class OverviewBoardGroupingProxy(QSortFilterProxyModel):
+    """
+    Proxy model pro záložku Overview:
+    - vloží virtuální sloupec 'No.' bez zásahu do source modelu (před 'Board'),
+    - ve sloupci 'Board' zobrazí hodnotu jen na prvním řádku souvislé skupiny,
+    - číslování 1..N v rámci skupiny se přepočítává po seřazení/změnách layoutu.
+    """
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._board_source_col: int = -1
+        self._board_proxy_insert_at: int = -1  # index, kam vkládáme 'No.'
+        self._row_no: Dict[int, int] = {}      # proxyRow -> pořadí v rámci Boardu
+        self._show_board_at_row: Dict[int, bool] = {}  # proxyRow -> je první výskyt?
+
+        # Reakce na změny layoutu/sortu
+        self.layoutChanged.connect(self._recalculate_grouping)
+        self.modelReset.connect(self._recalculate_grouping)
+
+    # ---- zásadní část: definice sloupců ----
+    def setSourceModel(self, sourceModel) -> None:  # type: ignore[override]
+        super().setSourceModel(sourceModel)
+        self._detect_board_column()
+        self._recalculate_grouping()
+
+    def _detect_board_column(self) -> None:
+        """Najde index sloupce 'Board' v source modelu dle headeru (case-insensitive)."""
+        self._board_source_col = -1
+        self._board_proxy_insert_at = -1
+        src = self.sourceModel()
+        if not src:
+            return
+        cols = src.columnCount()
+        for c in range(cols):
+            hdr = src.headerData(c, Qt.Horizontal, Qt.DisplayRole)
+            if isinstance(hdr, str) and hdr.strip().lower() == "board":
+                self._board_source_col = c
+                self._board_proxy_insert_at = c  # virtuální 'No.' půjde před tento index
+                break
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # type: ignore[override]
+        src = self.sourceModel()
+        if not src:
+            return 0
+        base = src.columnCount()
+        return base + 1 if self._board_source_col >= 0 else base
+
+    # ---- mapování proxy sloupců na source sloupce ----
+    def _map_proxy_to_source_col(self, proxy_col: int) -> Optional[int]:
+        """Vrátí index source sloupce nebo None (pokud jde o virtuální 'No.')."""
+        if self._board_source_col < 0:
+            return proxy_col  # žádná injekce
+        insert_at = self._board_proxy_insert_at
+        if proxy_col < insert_at:
+            return proxy_col
+        if proxy_col == insert_at:
+            return None  # 'No.' – virtuální
+        # posun o 1 za vložený 'No.'
+        return proxy_col - 1
+
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):  # type: ignore[override]
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole and self._board_source_col >= 0:
+            if section == self._board_proxy_insert_at:
+                return "No."
+            # posun za vloženým sloupcem – vrátíme původní headery
+            src_col = self._map_proxy_to_source_col(section)
+            if src_col is not None:
+                return self.sourceModel().headerData(src_col, orientation, role)
+            return None
+        # default
+        src_col = self._map_proxy_to_source_col(section)
+        if src_col is not None:
+            return self.sourceModel().headerData(src_col, orientation, role)
+        return super().headerData(section, orientation, role)
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # type: ignore[override]
+        if not index.isValid():
+            return None
+        if self._board_source_col < 0:
+            return super().data(index, role)
+
+        proxy_col = index.column()
+        insert_at = self._board_proxy_insert_at
+
+        # Virtuální 'No.'
+        if proxy_col == insert_at:
+            if role == Qt.DisplayRole:
+                return self._row_no.get(index.row(), None)
+            if role == Qt.TextAlignmentRole:
+                return Qt.AlignCenter
+            return None
+
+        # Board sloupec (už v proxy o 1 vpravo od 'No.')
+        if proxy_col == insert_at + 1:
+            if role == Qt.DisplayRole:
+                # jen u prvního řádku skupiny, jinak prázdno
+                return self._board_value(index.row()) if self._show_board_at_row.get(index.row(), False) else ""
+            # ostatní role necháme propadnout na source
+            # (kvůli případným tooltipům/stylu apod.)
+        # Ostatní běžná data – přemapujeme na source
+        src_col = self._map_proxy_to_source_col(proxy_col)
+        if src_col is None:
+            return None
+        src_index = self.mapToSource(self.index(index.row(), proxy_col))
+        if not src_index.isValid():
+            return None
+        # Vytvořte index do source s opravdovým sloupcem:
+        src_index = self.sourceModel().index(src_index.row(), src_col)
+        return self.sourceModel().data(src_index, role)
+
+    # ---- pomocné výpočty ----
+    def _board_value(self, proxy_row: int) -> str:
+        """Získá hodnotu 'Board' pro daný proxy řádek přímo ze source modelu."""
+        if self._board_source_col < 0:
+            return ""
+        # map row do source:
+        src_row = self.mapToSource(self.index(proxy_row, 0)).row()
+        if src_row < 0:
+            return ""
+        src_idx = self.sourceModel().index(src_row, self._board_source_col)
+        val = self.sourceModel().data(src_idx, Qt.DisplayRole)
+        return str(val) if val is not None else ""
+
+    def _recalculate_grouping(self) -> None:
+        """Po změně layoutu/sortu spočítá pořadí ('No.') a první výskyty Boardů."""
+        self._row_no.clear()
+        self._show_board_at_row.clear()
+        if self._board_source_col < 0:
+            return
+        prev_board = None
+        counter = 0
+        rows = self.rowCount()
+        for r in range(rows):
+            bval = self._board_value(r)
+            if bval != prev_board:
+                counter = 1
+                self._show_board_at_row[r] = True
+                prev_board = bval
+            else:
+                counter += 1
+            self._row_no[r] = counter
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.AscendingOrder) -> None:  # type: ignore[override]
+        super().sort(column, order)
+        # Po sortu se layout změní, ale explicitní refresh neuškodí:
+        self._recalculate_grouping()
+
+from PySide6.QtWidgets import QTableView
+
+class OverviewTableView(QTableView):
+    """
+    Tenká obálka nad QTableView: pokaždé, když se nastaví model,
+    automaticky ho zabalí do OverviewBoardGroupingProxy (pokud už není zabalen).
+    Díky tomu není třeba zasahovat do ostatní logiky plnění modelu.
+    """
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._proxy: Optional[OverviewBoardGroupingProxy] = None
+
+    def setModel(self, model) -> None:  # type: ignore[override]
+        if isinstance(model, OverviewBoardGroupingProxy):
+            self._proxy = model
+            return super().setModel(model)
+        proxy = OverviewBoardGroupingProxy(self)
+        proxy.setDynamicSortFilter(True)
+        proxy.setSourceModel(model)
+        self._proxy = proxy
+        super().setModel(proxy)
+
+    @property
+    def proxy(self) -> Optional[OverviewBoardGroupingProxy]:
+        return self._proxy
+
+
+
+
 class RecordsModel(QSortFilterProxyModel):
     def __init__(self, headers: List[str], parent=None):
         super().__init__(parent)
@@ -353,7 +532,7 @@ class MainWindow(QMainWindow):
     def _build_overview_tab(self) -> None:
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-            QPushButton, QTableView, QToolButton, QMenu
+            QPushButton, QToolButton, QMenu
         )
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QStyle
@@ -361,18 +540,17 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # === NOVÉ: tlačítko "Unparsed" (ad-hoc audit; žádná změna scanneru) ===
+        # Unparsed (pokud už máš – ponecháno)
         self.btn_unparsed = QToolButton(self)
         self.btn_unparsed.setText("Unparsed")
         self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
         self.btn_unparsed.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxWarning))
         self.btn_unparsed.setAutoRaise(True)
-        # jemné vizuální zvýraznění (dark theme safe)
         self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
         self.btn_unparsed.clicked.connect(self.show_unparsed_report)
         controls.addWidget(self.btn_unparsed)
     
-        # Export button (zůstává z 0.5a)
+        # Export…
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
@@ -407,17 +585,17 @@ class MainWindow(QMainWindow):
     
         layout.addLayout(controls)
     
-        # Tabulka Overview (beze změny)
-        self.table = QTableView()
-        self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.ExtendedSelection)  # multiselect
+        # === DŮLEŽITÉ: použijeme OverviewTableView (automaticky aplikuje proxy) ===
+        self.table = OverviewTableView(self)
+        self.table.setSelectionBehavior(self.table.SelectRows)
+        self.table.setSelectionMode(self.table.ExtendedSelection)
         self.table.doubleClicked.connect(self.open_selected_pdf)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # Kontextové menu – export do Sorted (zůstává)
+        # Kontextové menu – export do Sorted (ponecháno)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
     
         def _ctx(pos):
