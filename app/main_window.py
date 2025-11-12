@@ -1517,8 +1517,8 @@ class MainWindow(QMainWindow):
     
     def _overview_update_sorted_flags(self) -> None:
         """
-        Dosadí do POSLEDNÍHO sloupce 'Sorted' hodnotu 'Yes' / '' podle
-        SHODY SHA-256 HASHŮ mezi zdrojovým PDF a libovolným PDF ve „Sorted PDFs“.
+        Do POSLEDNÍHO sloupce 'Sorted' vloží 'Yes', pokud SHA-256 zdrojového PDF
+        je obsažen v hashech PDF nalezených v 'Sorted PDFs'. Jinak prázdno.
         """
         from PySide6.QtCore import Qt
     
@@ -1532,10 +1532,10 @@ class MainWindow(QMainWindow):
         rows = self._source_model.rowCount()
         for r in range(rows):
             idx_fn = self._source_model.index(r, fn_col)
-            fname = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
+            cell = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
             mark = ""
             try:
-                path = self._find_record_path_for_filename(fname)
+                path = self._find_record_path_for_filename(cell)
                 if path:
                     dig = self._hash_file(path)
                     if dig and dig in sorted_hashes:
@@ -1580,9 +1580,11 @@ class MainWindow(QMainWindow):
         
     def _find_record_path_for_filename(self, fname: str):
         """
-        Najde absolutní cestu k PDF dle názvu souboru.
-        Preferuje data z self.records (rec.path), fallback: vyhledání pod pdf_root (rglob).
-        Výsledek cache-uje v self._fname_to_path_cache.
+        Zjisti Path k PDF pro Overview řádek:
+          1) pokud v self.records existuje rec.path s tímto názvem,
+          2) pokud 'fname' v buňce je už plná cesta a existuje,
+          3) rekurzivně vyhledej pod pdf_root.
+        Cache: self._fname_to_path_cache
         """
         from pathlib import Path
     
@@ -1594,30 +1596,45 @@ class MainWindow(QMainWindow):
         if fname in self._fname_to_path_cache:
             return self._fname_to_path_cache[fname]
     
+        # 2) Buňka může obsahovat plnou cestu
+        try:
+            p = Path(fname)
+            if p.exists() and p.is_file():
+                self._fname_to_path_cache[fname] = p
+                return p
+        except Exception:
+            pass
+    
         # 1) records -> path
         try:
-            recs = getattr(self, "records", None) or []
-            for rec in recs:
+            for rec in (getattr(self, "records", None) or []):
                 p = getattr(rec, "path", None)
                 if p:
                     try:
-                        if Path(p).name == fname:
-                            self._fname_to_path_cache[fname] = Path(p)
-                            return self._fname_to_path_cache[fname]
+                        pp = Path(p)
+                        if pp.name == fname or str(pp) == fname:
+                            self._fname_to_path_cache[fname] = pp
+                            return pp
                     except Exception:
                         pass
         except Exception:
             pass
     
-        # 2) fallback – najít pod pdf_root
+        # 3) fallback – najít pod pdf_root
         try:
             root = getattr(self, "pdf_root", None)
             if root:
+                from pathlib import Path
                 root = Path(root)
-                for p in root.rglob(fname):
-                    if p.is_file():
-                        self._fname_to_path_cache[fname] = p
-                        return p
+                # case-insensitive hledání názvu
+                target = fname.lower()
+                for pp in root.rglob("*.pdf"):
+                    try:
+                        if pp.name.lower() == target:
+                            self._fname_to_path_cache[fname] = pp
+                            return pp
+                    except Exception:
+                        continue
         except Exception:
             pass
     
@@ -1626,33 +1643,65 @@ class MainWindow(QMainWindow):
         
     def _collect_sorted_hashes(self) -> set[str]:
         """
-        Projde rekurzivně složku 'Sorted PDFs' (pokud existuje) a vrátí set SHA-256 hashů všech PDF.
+        Vrátí set SHA-256 hashů všech PDF ve složce(ách) 'Sorted PDFs'.
         """
-        from pathlib import Path
-    
         hashes: set[str] = set()
         try:
-            roots = []
-            # pokus o vyvození kořene
-            if hasattr(self, "pdf_root") and self.pdf_root:
-                roots.append(Path(self.pdf_root))
-            roots.append(Path(__file__).resolve().parents[2])  # repo root
-    
-            for root in roots:
-                d = root / "Sorted PDFs"
-                if d.exists() and d.is_dir():
+            dirs = self._find_sorted_dirs()
+            for d in dirs:
+                try:
                     for p in d.rglob("*.pdf"):
                         dig = self._hash_file(p)
                         if dig:
                             hashes.add(dig)
-                    break  # našli jsme složku, stačí první výskyt
+                    # stačí první nalezená složka
+                    break
+                except Exception:
+                    continue
         except Exception:
             pass
         return hashes
+    
+    def _find_sorted_dirs(self):
+        """
+        Najdi složky 'Sorted PDFs' (case-insensitive) pod pdf_root i pod repo rootem.
+        Vrací list Path; první nalezená se použije v _collect_sorted_hashes.
+        """
+        from pathlib import Path
+        cand = []
+        names = {"sorted pdfs", "sorted_pdfs", "sorted-pdfs"}
+        roots = []
+        try:
+            if getattr(self, "pdf_root", None):
+                roots.append(Path(self.pdf_root))
+            roots.append(Path(__file__).resolve().parents[2])  # repo root
+        except Exception:
+            pass
+    
+        for root in roots:
+            try:
+                # 1) Přímé pokusy (běžný název)
+                direct = root / "Sorted PDFs"
+                if direct.exists() and direct.is_dir():
+                    cand.append(direct)
+                    continue
+                # 2) Case-insensitive v 1–2 úrovních
+                for d in [root] + [p for p in root.iterdir() if p.is_dir()]:
+                    for sub in d.iterdir():
+                        if sub.is_dir() and sub.name.lower() in names:
+                            cand.append(sub)
+                            break
+                    if cand:
+                        break
+            except Exception:
+                continue
+            if cand:
+                break
+        return cand
         
     def _hash_file(self, path) -> str:
         """
-        Spočítá SHA-256 daného souboru (čtení po blocích). Využívá jednoduchou cache.
+        SHA-256 daného souboru (čtení po 1 MiB blocích). Výsledek cache-uje.
         """
         from pathlib import Path
         import hashlib
@@ -1664,7 +1713,6 @@ class MainWindow(QMainWindow):
             key = str(p.resolve())
             if key in self._hash_cache:
                 return self._hash_cache[key]
-    
             h = hashlib.sha256()
             with p.open("rb") as fh:
                 for chunk in iter(lambda: fh.read(1024 * 1024), b""):
