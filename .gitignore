@@ -30,6 +30,8 @@ dist/
 # Local data
 PDF/
 PDF/**
+Sorted PDFs/
+Sorted PDFs/**
 
 # Caches / misc
 *.log
