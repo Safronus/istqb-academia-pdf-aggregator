@@ -1033,50 +1033,79 @@ class MainWindow(QMainWindow):
             proxy.set_search(txt)
 
     def _build_sorted_tab(self) -> None:
+        """
+        UI pro záložku 'Sorted PDFs': vlevo strom Board -> PDF, vpravo detailní formulář.
+        Minimal-change:
+          - doplněny přesné názvy polí očekávané zbytkem kódu (vč. ed_sigdate),
+          - přidány kompatibilní aliasy (ed_inst/ed_cand/ed_signature_date …),
+          - zachováno tlačítko 'Export…' (volá export_sorted_db()).
+        """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
-            QWidget, QFormLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton
+            QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton
         )
         from PySide6.QtCore import Qt
     
         layout = QVBoxLayout()
     
+        # Hlavní splitter: vlevo strom, vpravo formulář
         self.split_sorted = QSplitter(self.sorted_tab)
         self.split_sorted.setOrientation(Qt.Horizontal)
     
-        # Levý panel – strom Board -> PDF
+        # ===== LEVÁ STRANA: strom se soubory =====
         self.tree_sorted = QTreeWidget()
         self.tree_sorted.setHeaderLabels(["Board / PDF"])
         self.tree_sorted.itemSelectionChanged.connect(self._sorted_on_item_changed)
     
-        # Pravý panel – detaily a editace
+        # ===== PRAVÁ STRANA: detailní formulář =====
         right = QWidget()
-        self.form_sorted = QFormLayout(right)
+        right_layout = QVBoxLayout(right)
     
-        # Indikace stavu
-        self.lbl_sorted_status = QLabel("—")
-        self.form_sorted.addRow(QLabel("Status:"), self.lbl_sorted_status)
+        self.form_sorted = QFormLayout()
+        self.form_sorted.setFormAlignment(Qt.AlignTop)
+        self.form_sorted.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
     
-        # Definice polí (label -> widget)
-        # (Krátká pole = QLineEdit; dlouhé texty = QPlainTextEdit)
-        self.ed_board = QLineEdit();                     self.ed_board.setReadOnly(True)
+        # Jednořádková pole (názvy podle toho, co používají ostatní metody)
+        self.ed_board = QLineEdit()
         self.ed_app_type = QLineEdit()
-        self.ed_inst_name = QLineEdit()
-        self.ed_cand_name = QLineEdit()
-        self.ed_rec_acad = QLineEdit()
-        self.ed_rec_cert = QLineEdit()
+        self.ed_inst_name = QLineEdit()    # očekáváno ve zbytku kódu
+        self.ed_cand_name = QLineEdit()    # očekáváno ve zbytku kódu
+        self.ed_rec_acad = QLineEdit()     # očekáváno (alias k dřívějšímu ed_acad)
+        self.ed_rec_cert = QLineEdit()     # očekáváno (alias k dřívějšímu ed_cert)
         self.ed_fullname = QLineEdit()
         self.ed_email = QLineEdit()
         self.ed_phone = QLineEdit()
+        self.ed_sigdate = QLineEdit()      # očekáváno _sorted_set_editable
+        self.ed_filename = QLineEdit()
+    
+        # Víceřádková pole
         self.ed_address = QPlainTextEdit()
         self.ed_syllabi = QPlainTextEdit()
         self.ed_courses = QPlainTextEdit()
         self.ed_proof = QPlainTextEdit()
         self.ed_links = QPlainTextEdit()
         self.ed_additional = QPlainTextEdit()
-        self.ed_sigdate = QLineEdit()
-        self.ed_filename = QLineEdit();                 self.ed_filename.setReadOnly(True)
     
+        # ---- Kompatibilní aliasy (žádná nová logika; jen jmenné mosty) ----
+        # dřívější krátké názvy
+        self.ed_inst = self.ed_inst_name
+        self.ed_cand = self.ed_cand_name
+        self.ed_acad = self.ed_rec_acad
+        self.ed_cert = self.ed_rec_cert
+        # alias na dřívější delší název pro datum
+        self.ed_signature_date = self.ed_sigdate
+        # názvy odpovídající klíčům v DB (pro ostatní části kódu/exporty)
+        self.ed_contact_full_name = self.ed_fullname
+        self.ed_contact_email = self.ed_email
+        self.ed_contact_phone = self.ed_phone
+        self.ed_postal_address = self.ed_address
+        self.ed_syllabi_integration_description = self.ed_syllabi
+        self.ed_courses_modules_list = self.ed_courses
+        self.ed_proof_of_istqb_certifications = self.ed_proof
+        self.ed_university_links = self.ed_links
+        self.ed_additional_information_documents = self.ed_additional
+    
+        # Sestavení formuláře – popisky zarovnány s Overview
         self.form_sorted.addRow("Board:", self.ed_board)
         self.form_sorted.addRow("Application Type:", self.ed_app_type)
         self.form_sorted.addRow("Institution Name:", self.ed_inst_name)
@@ -1095,24 +1124,32 @@ class MainWindow(QMainWindow):
         self.form_sorted.addRow("Signature Date:", self.ed_sigdate)
         self.form_sorted.addRow("File name:", self.ed_filename)
     
-        # Tlačítka – Edit/Save a manuální rescan
+        right_layout.addLayout(self.form_sorted)
+    
+        # Řádek tlačítek (včetně Export…)
         btn_row = QHBoxLayout()
         self.btn_sorted_edit = QPushButton("Edit")
         self.btn_sorted_save = QPushButton("Save to DB")
+        self.btn_sorted_export = QPushButton("Export…")
         self.btn_sorted_rescan = QPushButton("Rescan Sorted")
+    
         btn_row.addWidget(self.btn_sorted_edit)
         btn_row.addWidget(self.btn_sorted_save)
         btn_row.addStretch(1)
+        btn_row.addWidget(self.btn_sorted_export)
         btn_row.addWidget(self.btn_sorted_rescan)
-        self.form_sorted.addRow(btn_row)
+        right_layout.addLayout(btn_row)
     
+        # Vazby tlačítek – žádné přejmenování stávajících metod
         self.btn_sorted_edit.clicked.connect(lambda: self._sorted_set_editable(True))
         self.btn_sorted_save.clicked.connect(self._sorted_save_changes)
+        self.btn_sorted_export.clicked.connect(self.export_sorted_db)
         self.btn_sorted_rescan.clicked.connect(self.rescan_sorted)
     
-        # Výchozí – read-only
+        # Výchozí – read-only pole; přepíná se tlačítkem Edit
         self._sorted_set_editable(False)
     
+        # Osazení splitteru a layoutu
         self.split_sorted.addWidget(self.tree_sorted)
         self.split_sorted.addWidget(right)
         self.split_sorted.setStretchFactor(0, 1)
@@ -1120,6 +1157,265 @@ class MainWindow(QMainWindow):
     
         layout.addWidget(self.split_sorted, 1)
         self.sorted_tab.setLayout(layout)
+        
+    def export_sorted_db(self) -> None:
+        """
+        Export CURRENT dataset from 'Sorted PDFs' tab using data stored in DB (self.sorted_db),
+        with the SAME dialog and options as Overview:
+          - formats: XLSX / CSV / TXT (multi-select, order matters for default extension),
+          - board filter: All boards or specific subset,
+          - fields: same labels/order as Overview (user-selectable),
+        and the SAME engines: _export_to_xlsx/_export_to_csv/_export_to_txt.
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QCheckBox, QLabel,
+            QComboBox, QPushButton, QListWidget, QListWidgetItem, QScrollArea,
+            QWidget, QGridLayout, QDialogButtonBox, QFileDialog, QMessageBox
+        )
+        from PySide6.QtCore import Qt
+        from datetime import datetime
+        import os
+        from pathlib import Path
+    
+        # --- Columns (labels/keys) – keep identical to Overview order/labels ---
+        FIELDS: list[tuple[str, str]] = [
+            ("Board", "board"),
+            ("Application Type", "application_type"),
+            ("Institution Name", "institution_name"),
+            ("Candidate Name", "candidate_name"),
+            ("Academia Recognition", "recognition_academia"),
+            ("Certified Recognition", "recognition_certified"),
+            ("Full Name", "contact_full_name"),
+            ("Email Address", "contact_email"),
+            ("Phone Number", "contact_phone"),
+            ("Postal Address", "contact_postal_address"),
+            ("Syllabi Integration", "syllabi_integration_description"),
+            ("Courses/Modules", "courses_modules_list"),
+            ("Proof of ISTQB Certifications", "proof_of_istqb_certifications"),
+            ("University Links", "university_links"),
+            ("Additional Info/Documents", "additional_information_documents"),
+            ("Signature Date", "signature_date"),
+            ("File name", "file_name"),
+        ]
+    
+        # --- Helper: boards present in the current Sorted tree (to mirror the view) ---
+        def _collect_sorted_boards() -> list[str]:
+            boards: list[str] = []
+            try:
+                top_count = self.tree_sorted.topLevelItemCount()
+                for i in range(top_count):
+                    t = self.tree_sorted.topLevelItem(i)
+                    if t:
+                        boards.append(t.text(0))
+            except Exception:
+                pass
+            # fallback: use Overview boards if available
+            if not boards and hasattr(self, "_collect_available_boards"):
+                try:
+                    boards = list(self._collect_available_boards())
+                except Exception:
+                    pass
+            return sorted({b for b in boards if b})
+    
+        # --- Export dialog (identical structure/behavior to Overview) ---
+        class ExportDialog(QDialog):
+            def __init__(self, boards_avail: list[str], parent=None):
+                super().__init__(parent)
+                self.setWindowTitle("Export options")
+                main = QVBoxLayout(self)
+    
+                # === Formats ===
+                gb_formats = QGroupBox("Formats")
+                lay_f = QHBoxLayout(gb_formats)
+                self.cb_xlsx = QCheckBox("XLSX")
+                self.cb_csv  = QCheckBox("CSV")
+                self.cb_txt  = QCheckBox("TXT")
+                # default like Overview: XLSX pre-checked
+                self.cb_xlsx.setChecked(True)
+                lay_f.addWidget(self.cb_xlsx); lay_f.addWidget(self.cb_csv); lay_f.addWidget(self.cb_txt)
+                main.addWidget(gb_formats)
+    
+                # === Boards (All / subset) ===
+                gb_boards = QGroupBox("Boards")
+                lay_b = QVBoxLayout(gb_boards)
+                self.chk_all_boards = QCheckBox("All boards")
+                self.chk_all_boards.setChecked(True)
+                lay_b.addWidget(self.chk_all_boards)
+    
+                self.lst_boards = QListWidget()
+                self.lst_boards.setSelectionMode(QListWidget.MultiSelection)
+                for b in boards_avail:
+                    it = QListWidgetItem(b)
+                    self.lst_boards.addItem(it)
+                    it.setSelected(False)
+                self.lst_boards.setEnabled(False)  # enabled only when not 'All boards'
+                lay_b.addWidget(self.lst_boards)
+                main.addWidget(gb_boards)
+    
+                def _toggle_boards(_=None):
+                    self.lst_boards.setEnabled(not self.chk_all_boards.isChecked())
+                self.chk_all_boards.toggled.connect(_toggle_boards)
+    
+                # === Fields (checkbox list, in a scroll) ===
+                gb_fields = QGroupBox("Fields (columns)")
+                lay_fields = QVBoxLayout(gb_fields)
+                scr = QScrollArea()
+                scr.setWidgetResizable(True)
+                host = QWidget()
+                grid = QGridLayout(host)
+    
+                self.field_checks: list[tuple[QCheckBox, tuple[str, str]]] = []
+                for row, (label, key) in enumerate(FIELDS):
+                    cb = QCheckBox(label)
+                    cb.setChecked(True)
+                    self.field_checks.append((cb, (label, key)))
+                    grid.addWidget(cb, row, 0)
+                scr.setWidget(host)
+                lay_fields.addWidget(scr)
+                main.addWidget(gb_fields)
+    
+                # === Buttons ===
+                btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                main.addWidget(btns)
+                btns.accepted.connect(self._accept)
+                btns.rejected.connect(self.reject)
+    
+                self.result: dict | None = None
+    
+            def _accept(self):
+                formats: list[str] = []
+                if self.cb_xlsx.isChecked(): formats.append("xlsx")
+                if self.cb_csv.isChecked():  formats.append("csv")
+                if self.cb_txt.isChecked():  formats.append("txt")
+                if not formats:
+                    QMessageBox.information(self, "Export", "Please choose at least one format.")
+                    return
+    
+                boards_sel: list[str] | None
+                if self.chk_all_boards.isChecked():
+                    boards_sel = None  # all
+                else:
+                    boards_sel = [it.text() for it in self.lst_boards.selectedItems()]
+                    if not boards_sel:
+                        QMessageBox.information(self, "Export", "Please select at least one board or check 'All boards'.")
+                        return
+    
+                fields: list[tuple[str, str]] = []
+                for cb, pair in self.field_checks:
+                    if cb.isChecked():
+                        fields.append(pair)
+                if not fields:
+                    QMessageBox.information(self, "Export", "Please select at least one field.")
+                    return
+    
+                self.result = {
+                    "formats": formats,
+                    "boards": boards_sel,   # None = all
+                    "fields": fields,       # list of (label, key)
+                }
+                self.accept()
+    
+        # Prepare dialog inputs
+        boards_avail = _collect_sorted_boards()
+        dlg = ExportDialog(boards_avail, self)
+        if dlg.exec_() != QDialog.Accepted or dlg.result is None:
+            return
+    
+        formats: list[str] = dlg.result["formats"]
+        boards_sel: list[str] | None = dlg.result["boards"]
+        fields: list[tuple[str, str]] = dlg.result["fields"]
+    
+        # === Build dataset from DB (respect boards filter and fields order) ===
+        headers = [lbl for (lbl, _key) in fields]
+        rows: list[list[str]] = []
+    
+        # collect paths per current tree (visible dataset)
+        paths: list[Path] = []
+        try:
+            top_count = self.tree_sorted.topLevelItemCount()
+            for i in range(top_count):
+                top = self.tree_sorted.topLevelItem(i)
+                board_name = top.text(0) if top else ""
+                if boards_sel is not None and board_name not in boards_sel:
+                    continue
+                for j in range(top.childCount()):
+                    ch = top.child(j)
+                    p = ch.data(0, Qt.UserRole + 1)
+                    if p:
+                        paths.append(Path(p))
+        except Exception:
+            pass
+    
+        if not paths:
+            QMessageBox.information(self, "Export", "No data in Sorted DB to export.")
+            return
+    
+        for p in paths:
+            rec = self.sorted_db.get(p)
+            if not rec:
+                continue
+            data = rec.get("data", {}) or {}
+            board_val = rec.get("board") or data.get("board") or ""
+            # provide 'file_name' virtual key
+            data = dict(data)
+            data["file_name"] = p.name
+            data["board"] = board_val
+    
+            row: list[str] = []
+            for (_lbl, key) in fields:
+                val = data.get(key, "")
+                row.append("" if val is None else str(val))
+            rows.append(row)
+    
+        if not rows:
+            QMessageBox.information(self, "Export", "No DB records found for current dataset/filters.")
+            return
+    
+        # === Save path (one dialog like Overview; base name composed from boards + timestamp) ===
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if boards_sel is None or not boards_sel:
+            suffix = "all"
+        else:
+            suffix = "+".join(boards_sel[:3])
+            if len(boards_sel) > 3:
+                suffix += "+more"
+        base_name = f"export-{suffix}-{ts}".replace(" ", "_")
+    
+        # Default extension = first chosen format
+        first_ext = formats[0]
+        default_name = f"{base_name}.{first_ext}"
+    
+        path, _ = QFileDialog.getSaveFileName(self, "Save export as…", default_name, "All files (*.*)")
+        if not path:
+            return
+    
+        base_no_ext, _sep, _ext = path.rpartition(".")
+        if not base_no_ext:
+            base_no_ext = path  # no dot
+    
+        # === Write all requested formats, using SAME helpers as Overview ===
+        ok, errs = [], []
+        for fmt in formats:
+            target = f"{base_no_ext}.{fmt}"
+            try:
+                if fmt == "xlsx":
+                    self._export_to_xlsx(target, headers, rows)
+                elif fmt == "csv":
+                    self._export_to_csv(target, headers, rows)
+                elif fmt == "txt":
+                    self._export_to_txt(target, headers, rows)
+                ok.append(target)
+            except Exception as e:
+                errs.append(f"{fmt.upper()}: {e}")
+    
+        if ok:
+            try:
+                self.statusBar().showMessage("Export done.")
+            except Exception:
+                pass
+            QMessageBox.information(self, "Export", "Exported:\n" + "\n".join(ok))
+        if errs:
+            QMessageBox.warning(self, "Export (some errors)", "Failed:\n" + "\n".join(errs))
         
     def rescan_sorted(self) -> None:
         from PySide6.QtWidgets import QTreeWidgetItem
