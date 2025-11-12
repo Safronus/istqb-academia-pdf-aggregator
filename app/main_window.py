@@ -1283,25 +1283,25 @@ class MainWindow(QMainWindow):
     def _build_overview_tab(self) -> None:
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-            QPushButton, QTableView, QToolButton, QMenu
+            QPushButton, QTableView, QToolButton, QMenu, QCheckBox
         )
         from PySide6.QtCore import Qt, QTimer
         from PySide6.QtWidgets import QStyle
+        from PySide6.QtGui import QStandardItemModel
     
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # === NOVÉ: tlačítko "Unparsed" (ad-hoc audit; žádná změna scanneru) ===
+        # === Unparsed tlačítko (beze změny) ===
         self.btn_unparsed = QToolButton(self)
         self.btn_unparsed.setText("Unparsed")
         self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
         self.btn_unparsed.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxWarning))
         self.btn_unparsed.setAutoRaise(True)
-        # jemné vizuální zvýraznění (dark theme safe)
         self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
         self.btn_unparsed.clicked.connect(self.show_unparsed_report)
     
-        # Export button (zůstává z 0.5a)
+        # === Export (beze změny) ===
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
@@ -1309,18 +1309,29 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.on_export_overview)
         controls.addWidget(self.btn_export)
     
+        # === Board filtr (beze změny) ===
         self.board_combo = QComboBox()
-        # Naplnění přes _rebuild_board_combo() – zde zatím jen placeholder "All"
         self.board_combo.addItem("All")
+        for b in sorted(KNOWN_BOARDS):
+            self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
+        # === Fulltext (beze změny) ===
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
     
+        # === Open Selected PDF (beze změny) ===
         self.open_btn = QPushButton("Open Selected PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
     
+        # === NOVÉ: Checkbox "Sorted" (filtr) ===
+        self.chk_overview_sorted = QCheckBox("Sorted")
+        self.chk_overview_sorted.setToolTip("Show/hide records that are already in 'Sorted PDFs'")
+        self.chk_overview_sorted.setChecked(True)
+        self.chk_overview_sorted.toggled.connect(self._on_overview_sorted_toggled)
+    
+        # Controls layout
         controls.addWidget(self.btn_unparsed)
         controls.addSpacing(12)
         controls.addWidget(QLabel("Board:"))
@@ -1329,11 +1340,12 @@ class MainWindow(QMainWindow):
         controls.addWidget(QLabel("Search:"))
         controls.addWidget(self.search_edit, 4)
         controls.addSpacing(12)
+        controls.addWidget(self.chk_overview_sorted)
+        controls.addSpacing(12)
         controls.addWidget(self.open_btn)
-    
         layout.addLayout(controls)
     
-        # Tabulka Overview
+        # === Tabulka Overview ===
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.ExtendedSelection)  # multiselect
@@ -1343,8 +1355,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # === NOVÉ: persistentní model + proxy (použije se i v rescan) ===
-        from PySide6.QtGui import QStandardItemModel
+        # === HLAVIČKY – přidán POSLEDNÍ sloupec "Sorted" ===
         self._headers = [
             "Board",
             "Application\nApplication Type",
@@ -1363,25 +1374,33 @@ class MainWindow(QMainWindow):
             "Eligibility Evidence\nAdditional Info/Documents",
             "Signature Date",
             "File\nFile name",
+            "Sorted",  # <— NOVÝ poslední sloupec
         ]
+    
+        # === Model + proxy (beze změny) ===
         if not hasattr(self, "_source_model"):
             self._source_model = QStandardItemModel(0, len(self._headers), self)
             self._source_model.setHorizontalHeaderLabels(self._headers)
+        else:
+            # Pokud model existuje, zajistíme správný počet sloupců a popisky
+            self._source_model.setColumnCount(len(self._headers))
+            self._source_model.setHorizontalHeaderLabels(self._headers)
+    
         if not hasattr(self, "_proxy"):
             self._proxy = RecordsModel(self._headers, self)
             self._proxy.setSourceModel(self._source_model)
             self._proxy.setDynamicSortFilter(True)
-            self.table.setModel(self._proxy)
+        self.table.setModel(self._proxy)
     
+        # Hiding delegate pro Board (beze změny)
         self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
     
-        # Skryj Eligibility sloupce už zde
+        # Skryj Eligibility sloupce (beze změny indexů)
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # Kontextové menu – export do Sorted
+        # === Kontextové menu – export do Sorted (beze změny) ===
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-    
         def _ctx(pos):
             idx = self.table.indexAt(pos)
             if idx.isValid():
@@ -1392,7 +1411,6 @@ class MainWindow(QMainWindow):
             chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
             if chosen == act_export_sorted:
                 self.export_selected_to_sorted()
-    
         if not hasattr(self, "_overview_ctx_connected"):
             self.table.customContextMenuRequested.connect(_ctx)
             self._overview_ctx_connected = True
@@ -1400,22 +1418,157 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
     
-        # === NOVÉ: napojení rebuildů Board comboboxu na změny dat ===
-        def _schedule_rebuild(*_):
-            QTimer.singleShot(0, self._rebuild_board_combo)
-    
-        if not getattr(self, "_board_combo_hooks", False):
+        # === NOVÉ: udržování sloupce „Sorted“ + aplikace filtru ===
+        # Po prvním vykreslení doplníme hodnoty a aplikujeme skrytí dle checkboxu.
+        def _post_build():
             try:
-                self._proxy.modelReset.connect(_schedule_rebuild)
-                self._proxy.rowsInserted.connect(_schedule_rebuild)
-                self._proxy.rowsRemoved.connect(_schedule_rebuild)
-                self._proxy.dataChanged.connect(_schedule_rebuild)
+                self._overview_update_sorted_flags()
+                self._overview_apply_sorted_row_hiding()
             except Exception:
                 pass
-            self._board_combo_hooks = True
+        QTimer.singleShot(0, _post_build)
     
-        # První naplnění dle aktuálních dat
-        self._rebuild_board_combo()
+        # Když se změní data modelu (reset/insert/sort/layout), přepočítat
+        def _reapply():
+            try:
+                self._overview_update_sorted_flags()
+                self._overview_apply_sorted_row_hiding()
+            except Exception:
+                pass
+    
+        try:
+            self._source_model.modelReset.connect(_reapply)
+            self._source_model.rowsInserted.connect(lambda *_: _reapply())
+            self._source_model.dataChanged.connect(lambda *_: _reapply())
+            self._proxy.layoutChanged.connect(_reapply)
+            self._proxy.modelReset.connect(_reapply)
+        except Exception:
+            pass
+        
+    def _overview_find_col(self, tail: str) -> int | None:
+        """
+        Najde index sloupce podle 'tail' = poslední řádek popisku (po \n).
+        Např. tail="File name" → vrátí index sloupce s "File\nFile name".
+        """
+        headers = getattr(self, "_headers", [])
+        for i, h in enumerate(headers):
+            t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
+            if t.lower() == tail.lower():
+                return i
+        return None
+    
+    def _collect_sorted_filenames(self) -> set[str]:
+        """
+        Vrátí množinu názvů souborů, které jsou považovány za 'Sorted'.
+        1) in-memory DB (self.sorted_db / podobné),
+        2) fallback: existující soubory v adresáři 'Sorted PDFs' (pokud jej najdeme).
+        """
+        from pathlib import Path
+        names: set[str] = set()
+    
+        # 1) In-memory
+        for attr in ("sorted_db", "_sorted_db", "sorted_records", "_sorted_records", "sorted_data", "_sorted_data"):
+            cnt = getattr(self, attr, None)
+            if not cnt:
+                continue
+            def _iter(c):
+                if isinstance(c, dict):
+                    for v in c.values():
+                        yield v
+                elif isinstance(c, list):
+                    for v in c:
+                        yield v
+            for rec in _iter(cnt):
+                try:
+                    # preferuj path.name
+                    fn = None
+                    p = getattr(rec, "path", None)
+                    if p:
+                        try:
+                            fn = Path(p).name
+                        except Exception:
+                            fn = None
+                    if not fn and isinstance(rec, dict):
+                        fn = rec.get("file_name") or (Path(rec.get("path")).name if rec.get("path") else None)
+                    if fn:
+                        names.add(str(fn))
+                except Exception:
+                    pass
+            if names:
+                break
+    
+        # 2) Fallback: projdi 'Sorted PDFs'
+        try:
+            roots = []
+            # zkus odvodit root
+            if hasattr(self, "pdf_root") and self.pdf_root:
+                roots.append(Path(self.pdf_root))
+            roots.append(Path(__file__).resolve().parents[2])  # repo root
+            for root in roots:
+                d = root / "Sorted PDFs"
+                if d.exists() and d.is_dir():
+                    for p in d.glob("**/*.pdf"):
+                        names.add(p.name)
+                    break
+        except Exception:
+            pass
+    
+        return names
+    
+    def _overview_update_sorted_flags(self) -> None:
+        """
+        Dosadí do POSLEDNÍHO sloupce 'Sorted' hodnotu 'Yes' / '' podle shody názvu souboru
+        s DB/FS 'Sorted'. Nezasahuje do ostatních dat.
+        """
+        from PySide6.QtCore import Qt
+    
+        fn_col = self._overview_find_col("File name")
+        sorted_col = self._overview_find_col("Sorted")
+        if fn_col is None or sorted_col is None:
+            return
+    
+        sorted_names = self._collect_sorted_filenames()
+    
+        rows = self._source_model.rowCount()
+        for r in range(rows):
+            idx_fn = self._source_model.index(r, fn_col)
+            fname = self._source_model.data(idx_fn, Qt.DisplayRole) or ""
+            mark = "Yes" if fname and fname in sorted_names else ""
+            self._source_model.setData(self._source_model.index(r, sorted_col), mark)
+            
+    def _overview_apply_sorted_row_hiding(self) -> None:
+        """
+        Skryje/ukáže řádky podle checkboxu 'Sorted'.
+        Implementováno přímo na QTableView (bez zásahu do RecordsModel).
+        """
+        from PySide6.QtCore import Qt
+    
+        if not hasattr(self, "table") or not hasattr(self, "_proxy"):
+            return
+        sorted_col = self._overview_find_col("Sorted")
+        if sorted_col is None:
+            return
+    
+        show_sorted = bool(self.chk_overview_sorted.isChecked())
+        # projdi řádky proxy modelu (zobrazené pořadí)
+        try:
+            rows = self._proxy.rowCount()
+            for r in range(rows):
+                idx = self._proxy.index(r, sorted_col)
+                val = self._proxy.data(idx, Qt.DisplayRole) or ""
+                hide = (val == "Yes") and (not show_sorted)
+                self.table.setRowHidden(r, hide)
+        except Exception:
+            pass
+        
+    def _on_overview_sorted_toggled(self, checked: bool) -> None:
+        """
+        Reakce na checkbox 'Sorted' – pouze přepočítá hiding dle aktuálních dat.
+        """
+        try:
+            self._overview_apply_sorted_row_hiding()
+        except Exception:
+            pass
         
     def _rebuild_board_combo(self) -> None:
         """
