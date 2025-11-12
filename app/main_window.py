@@ -83,27 +83,33 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.pdf_root = pdf_root
     
-        self.records: List[PdfRecord] = []
-        self.records_sorted: List[PdfRecord] = []  # NEW
+        # Kořen "Sorted PDFs"
+        self.sorted_root = (Path.cwd() / "Sorted PDFs").resolve()
     
+        # DB pro Sorted PDFs
+        from app.sorted_db import SortedDb
+        self.sorted_db = SortedDb(self.sorted_root)
+        self.sorted_db.load()
+    
+        self.records: List[PdfRecord] = []
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
     
         self.overview_tab = QWidget()
         self.browser_tab = QWidget()
-        self.sorted_tab = QWidget()  # NEW
+        self.sorted_tab = QWidget()
     
         self.tabs.addTab(self.overview_tab, "Overview")
         self.tabs.addTab(self.browser_tab, "PDF Browser")
-        self.tabs.addTab(self.sorted_tab, "Sorted PDFs")  # NEW
+        self.tabs.addTab(self.sorted_tab, "Sorted PDFs")
     
         self._build_menu()
         self._build_overview_tab()
         self._build_browser_tab()
-        self._build_sorted_tab()         # NEW
+        self._build_sorted_tab()
     
         self.rescan()
-        self.rescan_sorted()             # NEW – úvodní naplnění záložky Sorted PDFs
+        self.rescan_sorted()
         self._init_fs_watcher()
 
     # ----- Menu / actions -----
@@ -289,11 +295,65 @@ class MainWindow(QMainWindow):
             "UI: English • Theme: Dark • Target: macOS"
         )
 
+    def export_selected_to_sorted(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        from pathlib import Path
+        import shutil
+    
+        sel = self.table.selectionModel()
+        if not sel or not sel.hasSelection():
+            QMessageBox.information(self, "Export", "Vyber alespoň jeden řádek.")
+            return
+    
+        # Detekce sloupců Board a File name (předpoklad: poslední sloupec = File name s fullpath v UserRole+1)
+        model = self.table.model()
+        if model is None:
+            return
+    
+        # Zjisti indexy vybraných řádků v source modelu
+        rows = [i.row() for i in sel.selectedRows()]
+        if not rows:
+            QMessageBox.information(self, "Export", "Není co exportovat.")
+            return
+    
+        exported = 0
+        for r in rows:
+            # Board (sloupec 0) a File (poslední sloupec)
+            try:
+                board = model.index(r, 0).data() or "Unknown"
+                file_col = model.columnCount() - 1
+                idx_file = model.index(r, file_col)
+                src_path = idx_file.data(Qt.UserRole + 1)
+                if not src_path:
+                    continue
+                sp = Path(src_path)
+                if not sp.exists():
+                    continue
+    
+                # cílové umístění
+                dst_dir = self.sorted_root / board
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                dst = dst_dir / sp.name
+    
+                # kopie (zachovej metadata)
+                shutil.copy2(sp, dst)
+                exported += 1
+            except Exception:
+                continue
+    
+        # Rescan Sorted (naparsuje a upsertne do DB)
+        self.rescan_sorted()
+    
+        try:
+            self.statusBar().showMessage(f"Exportováno do 'Sorted PDFs': {exported} souborů.")
+        except Exception:
+            pass
+
     # ----- Overview tab -----
     def _build_overview_tab(self) -> None:
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-            QPushButton, QTableView, QToolButton
+            QPushButton, QTableView, QToolButton, QMenu
         )
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QStyle
@@ -301,7 +361,18 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # --- NEW: Export button (ikonové) ---
+        # === NOVÉ: tlačítko "Unparsed" (ad-hoc audit; žádná změna scanneru) ===
+        self.btn_unparsed = QToolButton(self)
+        self.btn_unparsed.setText("Unparsed")
+        self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
+        self.btn_unparsed.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxWarning))
+        self.btn_unparsed.setAutoRaise(True)
+        # jemné vizuální zvýraznění (dark theme safe)
+        self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
+        self.btn_unparsed.clicked.connect(self.show_unparsed_report)
+        controls.addWidget(self.btn_unparsed)
+    
+        # Export button (zůstává z 0.5a)
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
@@ -309,23 +380,22 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.on_export_overview)
         controls.addWidget(self.btn_export)
     
-        # Board filter (beze změny logiky)
+        # Board filter
         self.board_combo = QComboBox()
         self.board_combo.addItem("All")
         for b in sorted(KNOWN_BOARDS):
             self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
-        # Fulltext search (beze změny)
+        # Search
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
     
-        # Open PDF (beze změny)
+        # Open PDF
         self.open_btn = QPushButton("Open PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
     
-        # Rozmístění ovládacích prvků (zachováno)
         controls.addSpacing(8)
         controls.addWidget(QLabel("Board:"))
         controls.addWidget(self.board_combo, 1)
@@ -337,21 +407,141 @@ class MainWindow(QMainWindow):
     
         layout.addLayout(controls)
     
-        # Tabulka Overview (beze změny parametrů)
+        # Tabulka Overview (beze změny)
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.SingleSelection)
+        self.table.setSelectionMode(QTableView.ExtendedSelection)  # multiselect
         self.table.doubleClicked.connect(self.open_selected_pdf)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # Kontextové menu pro případ, že už ho máš napojené (nepřepisujeme)
+        # Kontextové menu – export do Sorted (zůstává)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+    
+        def _ctx(pos):
+            idx = self.table.indexAt(pos)
+            if idx.isValid():
+                if not self.table.selectionModel().isSelected(idx):
+                    self.table.selectRow(idx.row())
+            menu = QMenu(self.table)
+            act_export_sorted = menu.addAction("Exportovat do složky 'Sorted PDFs'")
+            chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
+            if chosen == act_export_sorted:
+                self.export_selected_to_sorted()
+    
+        if not getattr(self, "_overview_ctx_connected", False):
+            self.table.customContextMenuRequested.connect(_ctx)
+            self._overview_ctx_connected = True
     
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
+
+    def _enumerate_all_pdfs(self) -> list[str]:
+        """
+        Vrátí list absolutních cest na *.pdf pod self.pdf_root (rekurzivně),
+        s ignorováním jakékoli složky '__archive__'.
+        """
+        from pathlib import Path
+        root = getattr(self, "pdf_root", None)
+        if not root:
+            return []
+        root = Path(root).resolve()
+        out: list[str] = []
+        try:
+            for p in root.rglob("*.pdf"):
+                try:
+                    rel = p.resolve().relative_to(root)
+                    if "__archive__" in rel.parts:
+                        continue
+                    out.append(str(p.resolve()))
+                except Exception:
+                    # pokud by nešla relativní cesta, stále přidáme (bez filtru)
+                    out.append(str(p.resolve()))
+        except Exception:
+            pass
+        return out
+
+    def show_unparsed_report(self) -> None:
+        """
+        Ad-hoc audit: porovná PDF v self.pdf_root (rekurzivně; ignoruje '__archive__')
+        s aktuálně zobrazenými záznamy (self.records).
+        Zobrazí dialog s přehledem "unparsed" PDF (Board, File name, Full path).
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+            QTreeWidget, QTreeWidgetItem, QPushButton
+        )
+        from PySide6.QtCore import Qt
+        from pathlib import Path
+    
+        # 1) PDF na disku (mimo __archive__)
+        all_pdfs = self._enumerate_all_pdfs()
+    
+        # 2) PDF v Overview (už naparsovaná) – vezmeme absolutní cesty
+        parsed_paths = set()
+        try:
+            for r in getattr(self, "records", []):
+                p = getattr(r, "path", None)
+                if p:
+                    parsed_paths.add(str(Path(p).resolve()))
+        except Exception:
+            pass
+    
+        # 3) Rozdíl = unparsed
+        unparsed = []
+        for p in all_pdfs:
+            ap = str(Path(p).resolve())
+            if ap not in parsed_paths:
+                # board = první složka pod pdf_root (pokud existuje)
+                try:
+                    rel = Path(p).resolve().relative_to(self.pdf_root.resolve())
+                    board = rel.parts[0] if len(rel.parts) > 1 else ""
+                except Exception:
+                    board = ""
+                unparsed.append((board, Path(p).name, ap))
+    
+        # 4) Dialog s výsledky
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Unparsed PDFs")
+        dlg.resize(800, 500)
+    
+        lay = QVBoxLayout(dlg)
+        header = QLabel(f"PDFs on disk not present in Overview: {len(unparsed)}")
+        header.setStyleSheet("QLabel { color: #ff6b6b; font-weight: 600; }")
+        lay.addWidget(header)
+    
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["Board", "File name", "Full path"])
+        tree.header().setDefaultAlignment(Qt.AlignCenter)
+        tree.header().setStretchLastSection(True)
+        for board, fname, fullp in sorted(unparsed, key=lambda t: (t[0].lower(), t[1].lower())):
+            it = QTreeWidgetItem([board or "—", fname, fullp])
+            tree.addTopLevelItem(it)
+        tree.expandAll()
+        lay.addWidget(tree, 1)
+    
+        # Tlačítka
+        btns = QHBoxLayout()
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(dlg.accept)
+        btns.addStretch(1)
+        btns.addWidget(btn_close)
+        lay.addLayout(btns)
+    
+        # 5) Aktualizuj badge na tlačítku
+        try:
+            if len(unparsed) > 0:
+                self.btn_unparsed.setText(f"Unparsed: {len(unparsed)}")
+                self.statusBar().showMessage(f"Unparsed PDFs: {len(unparsed)}")
+            else:
+                self.btn_unparsed.setText("Unparsed")
+                self.statusBar().showMessage("All PDFs present in Overview.")
+        except Exception:
+            pass
+    
+        dlg.exec()
 
     def _collect_available_boards(self) -> list[str]:
         """
@@ -741,207 +931,300 @@ class MainWindow(QMainWindow):
             proxy.set_search(txt)
 
     def _build_sorted_tab(self) -> None:
+        from PySide6.QtWidgets import (
+            QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
+            QWidget, QFormLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton
+        )
+        from PySide6.QtCore import Qt
+    
         layout = QVBoxLayout()
-        controls = QHBoxLayout()
     
-        # Board filter (shodně s Overview)
-        self.board_combo_sorted = QComboBox()
-        self.board_combo_sorted.addItem("All")
-        for b in sorted(KNOWN_BOARDS):
-            self.board_combo_sorted.addItem(b)
-        self.board_combo_sorted.currentTextChanged.connect(self._filter_board_sorted)
+        self.split_sorted = QSplitter(self.sorted_tab)
+        self.split_sorted.setOrientation(Qt.Horizontal)
     
-        # Search (shodně s Overview)
-        self.search_edit_sorted = QLineEdit()
-        self.search_edit_sorted.setPlaceholderText("Search…")
-        self.search_edit_sorted.textChanged.connect(self._filter_text_sorted)
+        # Levý panel – strom Board -> PDF
+        self.tree_sorted = QTreeWidget()
+        self.tree_sorted.setHeaderLabels(["Board / PDF"])
+        self.tree_sorted.itemSelectionChanged.connect(self._sorted_on_item_changed)
     
-        # Open PDF (shodně s Overview, ale cíluje tuto tabulku)
-        self.open_btn_sorted = QPushButton("Open PDF")
-        self.open_btn_sorted.clicked.connect(self.open_selected_pdf_sorted)
+        # Pravý panel – detaily a editace
+        right = QWidget()
+        self.form_sorted = QFormLayout(right)
     
-        controls.addWidget(QLabel("Board:"))
-        controls.addWidget(self.board_combo_sorted, 1)
-        controls.addSpacing(12)
-        controls.addWidget(QLabel("Search:"))
-        controls.addWidget(self.search_edit_sorted, 4)
-        controls.addSpacing(12)
-        controls.addWidget(self.open_btn_sorted)
+        # Indikace stavu
+        self.lbl_sorted_status = QLabel("—")
+        self.form_sorted.addRow(QLabel("Status:"), self.lbl_sorted_status)
     
-        layout.addLayout(controls)
+        # Definice polí (label -> widget)
+        # (Krátká pole = QLineEdit; dlouhé texty = QPlainTextEdit)
+        self.ed_board = QLineEdit();                     self.ed_board.setReadOnly(True)
+        self.ed_app_type = QLineEdit()
+        self.ed_inst_name = QLineEdit()
+        self.ed_cand_name = QLineEdit()
+        self.ed_rec_acad = QLineEdit()
+        self.ed_rec_cert = QLineEdit()
+        self.ed_fullname = QLineEdit()
+        self.ed_email = QLineEdit()
+        self.ed_phone = QLineEdit()
+        self.ed_address = QPlainTextEdit()
+        self.ed_syllabi = QPlainTextEdit()
+        self.ed_courses = QPlainTextEdit()
+        self.ed_proof = QPlainTextEdit()
+        self.ed_links = QPlainTextEdit()
+        self.ed_additional = QPlainTextEdit()
+        self.ed_sigdate = QLineEdit()
+        self.ed_filename = QLineEdit();                 self.ed_filename.setReadOnly(True)
     
-        # Tabulka (kopie nastavení z Overview)
-        self.table_sorted = QTableView()
-        self.table_sorted.setSelectionBehavior(QTableView.SelectRows)
-        self.table_sorted.setSelectionMode(QTableView.SingleSelection)
-        self.table_sorted.doubleClicked.connect(self.open_selected_pdf_sorted)
-        self.table_sorted.setSortingEnabled(True)
-        self.table_sorted.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
-        self.table_sorted.horizontalHeader().setStretchLastSection(True)
-        self.table_sorted.horizontalHeader().setMinimumHeight(44)
+        self.form_sorted.addRow("Board:", self.ed_board)
+        self.form_sorted.addRow("Application Type:", self.ed_app_type)
+        self.form_sorted.addRow("Institution Name:", self.ed_inst_name)
+        self.form_sorted.addRow("Candidate Name:", self.ed_cand_name)
+        self.form_sorted.addRow("Academia Recognition:", self.ed_rec_acad)
+        self.form_sorted.addRow("Certified Recognition:", self.ed_rec_cert)
+        self.form_sorted.addRow("Full Name:", self.ed_fullname)
+        self.form_sorted.addRow("Email Address:", self.ed_email)
+        self.form_sorted.addRow("Phone Number:", self.ed_phone)
+        self.form_sorted.addRow("Postal Address:", self.ed_address)
+        self.form_sorted.addRow("Syllabi Integration:", self.ed_syllabi)
+        self.form_sorted.addRow("Courses/Modules:", self.ed_courses)
+        self.form_sorted.addRow("Proof of ISTQB Certifications:", self.ed_proof)
+        self.form_sorted.addRow("University Links:", self.ed_links)
+        self.form_sorted.addRow("Additional Info/Documents:", self.ed_additional)
+        self.form_sorted.addRow("Signature Date:", self.ed_sigdate)
+        self.form_sorted.addRow("File name:", self.ed_filename)
     
-        layout.addWidget(self.table_sorted, 1)
+        # Tlačítka – Edit/Save a manuální rescan
+        btn_row = QHBoxLayout()
+        self.btn_sorted_edit = QPushButton("Edit")
+        self.btn_sorted_save = QPushButton("Save to DB")
+        self.btn_sorted_rescan = QPushButton("Rescan Sorted")
+        btn_row.addWidget(self.btn_sorted_edit)
+        btn_row.addWidget(self.btn_sorted_save)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.btn_sorted_rescan)
+        self.form_sorted.addRow(btn_row)
+    
+        self.btn_sorted_edit.clicked.connect(lambda: self._sorted_set_editable(True))
+        self.btn_sorted_save.clicked.connect(self._sorted_save_changes)
+        self.btn_sorted_rescan.clicked.connect(self.rescan_sorted)
+    
+        # Výchozí – read-only
+        self._sorted_set_editable(False)
+    
+        self.split_sorted.addWidget(self.tree_sorted)
+        self.split_sorted.addWidget(right)
+        self.split_sorted.setStretchFactor(0, 1)
+        self.split_sorted.setStretchFactor(1, 2)
+    
+        layout.addWidget(self.split_sorted, 1)
         self.sorted_tab.setLayout(layout)
         
     def rescan_sorted(self) -> None:
-        """
-        Naplní tabulku Sorted PDFs – čte kořen 'Sorted PDFs/' (podsložky = boardy).
-        Logika zobrazení, hlaviček, barev a ikonek je shodná s Overview::rescan().
-        """
+        from PySide6.QtWidgets import QTreeWidgetItem
         from pathlib import Path
-        # --- 1) Robustní určení kořene "Sorted PDFs" ---
-        candidates = []
-        try:
-            if isinstance(getattr(self, "sorted_root", None), Path):
-                candidates.append(self.sorted_root)
-        except Exception:
-            pass
-        try:
-            if isinstance(getattr(self, "pdf_root", None), Path):
-                candidates.append(self.pdf_root.parent / "Sorted PDFs")
-        except Exception:
-            pass
-        try:
-            candidates.append(Path(__file__).resolve().parent.parent / "Sorted PDFs")
-        except Exception:
-            pass
-        try:
-            candidates.append(Path.cwd() / "Sorted PDFs")
-        except Exception:
-            pass
+        from app.pdf_scanner import PdfScanner
     
-        chosen = None
-        for cand in candidates:
-            if isinstance(cand, Path) and cand.exists() and cand.is_dir():
-                chosen = cand
-                break
+        root = self.sorted_root
+        self.tree_sorted.clear()
     
-        if chosen is None:
-            # Vyprázdnit tabulku a status
-            from PySide6.QtGui import QStandardItemModel
-            empty_model = QStandardItemModel(0, 0, self)
-            proxy = RecordsModel([], self)
-            proxy.setSourceModel(empty_model)
-            self.table_sorted.setModel(proxy)
+        if not root.exists():
             try:
-                self.statusBar().showMessage("Sorted PDFs: root not found.")
+                self.statusBar().showMessage("Sorted PDFs root not found.")
             except Exception:
                 pass
-            self.records_sorted = []
             return
     
-        # --- 2) Sken & parsování ---
-        scanner = PdfScanner(chosen)
-        self.records_sorted = scanner.scan()
+        # 1) Naparsuj celý kořen Sorted PDFs
+        scanner = PdfScanner(root)
+        parsed_records = scanner.scan()  # List[PdfRecord]
     
-        # --- 3) Hlavičky a model (shodné s Overview) ---
-        from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor, QIcon
-        from PySide6.QtWidgets import QStyle
+        # 2) Upsert do DB (nepřepisuj edited=True)
+        for rec in parsed_records:
+            try:
+                board = getattr(rec, "board", "") or ""
+                path: Path = getattr(rec, "path")
+                file_name = path.name
+                # převod dat – použij dataclass->dict
+                from dataclasses import asdict
+                data = asdict(rec)
+                self.sorted_db.upsert_parsed(path, board, file_name, data)
+            except Exception:
+                continue
     
-        headers = [
-            "Board",
-            "Application\nApplication Type",
-            "Name of Your Academic Institution\nInstitution Name",
-            "Name of Your Academic Institution\nCandidate Name",
-            "Wished Recognitions\nAcademia Recognition",
-            "Wished Recognitions\nCertified Recognition",
-            "Contact details for Information exchange\nFull Name",
-            "Contact details for Information exchange\nEmail Address",
-            "Contact details for Information exchange\nPhone Number",
-            "Contact details for Information exchange\nPostal Address",
-            "Eligibility Evidence\nSyllabi Integration",      # 10 (HIDE)
-            "Eligibility Evidence\nCourses/Modules",          # 11 (HIDE)
-            "Eligibility Evidence\nProof of ISTQB Certifications",  # 12 (HIDE)
-            "Eligibility Evidence\nUniversity Links",         # 13 (HIDE)
-            "Eligibility Evidence\nAdditional Info/Documents",# 14 (HIDE)
-            "Signature\nSignature Date",
-            "File\nFile name",
-        ]
+        self.sorted_db.save()
     
-        model = QStandardItemModel(0, len(headers), self)
-        model.setHorizontalHeaderLabels(headers)
+        # 3) Postav strom Board → PDF z FS
+        boards: dict[str, list[Path]] = {}
+        for board_dir in root.iterdir():
+            if not board_dir.is_dir():
+                continue
+            if board_dir.name == "__archive__":
+                continue
+            # všechny PDF rekurzivně
+            pdfs = [p for p in board_dir.rglob("*.pdf")]
+            if not pdfs:
+                continue
+            boards[board_dir.name] = sorted(pdfs, key=lambda p: p.name.lower())
     
-        # Barvy skupin (stejné hex jako v Overview)
-        BRUSH_APP  = QBrush(QColor("#263238"))
-        BRUSH_INST = QBrush(QColor("#1e2a38"))
-        BRUSH_RECOG= QBrush(QColor("#1b2b34"))
-        BRUSH_CONT = QBrush(QColor("#16222a"))
-        BRUSH_ELIG = QBrush(QColor("#111a20"))
+        for board_name in sorted(boards.keys(), key=str.lower):
+            top = QTreeWidgetItem([board_name])
+            top.setData(0, Qt.UserRole + 1, None)  # board item
+            self.tree_sorted.addTopLevelItem(top)
+            for p in boards[board_name]:
+                child = QTreeWidgetItem([p.name])
+                child.setData(0, Qt.UserRole + 1, str(p.resolve()))
+                top.addChild(child)
+            top.setExpanded(True)
     
-        COLS_APPLICATION = [1]
-        COLS_INSTITUTION = [2, 3]
-        COLS_RECOG       = [4, 5]
-        COLS_CONTACT     = [6, 7, 8, 9]
-        COLS_ELIG        = [10, 11, 12, 13, 14]
+        try:
+            self.statusBar().showMessage(f"Sorted PDFs: {sum(len(v) for v in boards.values())} files in {len(boards)} boards.")
+        except Exception:
+            pass
+
+    def _sorted_db_path(self) -> Path:
+        return self.sorted_db.db_path
     
-        style = self.style()
-        icon_yes = style.standardIcon(QStyle.SP_DialogApplyButton)
-        icon_no  = style.standardIcon(QStyle.SP_DialogCancelButton)
+    def _sorted_key_for(self, abs_path: Path) -> str:
+        return self.sorted_db.key_for(abs_path)
     
-        def paint_group(items: list[QStandardItem], cols: list[int], brush: QBrush) -> None:
-            for c in cols:
-                if 0 <= c < len(items):
-                    items[c].setBackground(brush)
+    def _sorted_on_item_changed(self) -> None:
+        sel = self.tree_sorted.selectedItems()
+        if not sel:
+            return
+        item = sel[0]
+        p = item.data(0, Qt.UserRole + 1)
+        if not p:
+            # vybrán pouze board – vymaž detaily
+            self._sorted_fill_details(None)
+            return
+        from pathlib import Path
+        self._sorted_fill_details(Path(p))
     
-        def set_yesno_icon(item: QStandardItem) -> None:
-            val = (item.text() or "").strip().lower()
-            if val in {"yes", "on", "true", "1", "checked"}:
-                item.setIcon(icon_yes)
+    def _sorted_fill_details(self, abs_path: Optional[Path]) -> None:
+        # Vyčisti
+        def _set(txt_widget, val: str):
+            if hasattr(txt_widget, "setPlainText"):
+                txt_widget.setPlainText(val or "")
             else:
-                item.setIcon(icon_no)
+                txt_widget.setText(val or "")
     
-        for rec in self.records_sorted:
-            row_vals = rec.as_row()  # 17 prvků
-            items = [QStandardItem(v) for v in row_vals]
-            for it in items:
-                it.setEditable(False)
+        if abs_path is None:
+            for w in (self.ed_board, self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
+                      self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname, self.ed_email,
+                      self.ed_phone, self.ed_address, self.ed_syllabi, self.ed_courses,
+                      self.ed_proof, self.ed_links, self.ed_additional, self.ed_sigdate,
+                      self.ed_filename):
+                _set(w, "")
+            self._sorted_set_editable(False)
+            self._sorted_set_status(None)
+            return
     
-            paint_group(items, COLS_APPLICATION, BRUSH_APP)
-            paint_group(items, COLS_INSTITUTION, BRUSH_INST)
-            paint_group(items, COLS_RECOG,      BRUSH_RECOG)
-            paint_group(items, COLS_CONTACT,    BRUSH_CONT)
-            paint_group(items, COLS_ELIG,       BRUSH_ELIG)
+        # DB → load, pokud není, provedeme okamžitý parse (bez zápisu)
+        rec = self.sorted_db.get(abs_path)
+        data = None
+        edited = False
+        board = ""
+        file_name = abs_path.name
     
-            set_yesno_icon(items[4])  # Academia
-            set_yesno_icon(items[5])  # Certified
+        if rec:
+            data = rec.get("data", {})
+            edited = bool(rec.get("edited"))
+            board = rec.get("board") or ""
+        else:
+            # parse on-the-fly
+            try:
+                from app.pdf_scanner import PdfScanner
+                scanner = PdfScanner(abs_path.parent)
+                parsed = scanner.scan()  # celé parent, najdeme naše
+                for r in parsed:
+                    if getattr(r, "path", None) and Path(r.path).resolve() == abs_path.resolve():
+                        from dataclasses import asdict
+                        data = asdict(r)
+                        board = getattr(r, "board", "") or abs_path.parent.name
+                        break
+            except Exception:
+                data = {}
     
-            # Skrytá plná cesta v posledním sloupci (UserRole+1)
-            FILE_COL = len(headers) - 1
-            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
+        # Naplň UI
+        _set(self.ed_board, board)
+        _set(self.ed_app_type, str(data.get("application_type", "")))
+        _set(self.ed_inst_name, str(data.get("institution_name", "")))
+        _set(self.ed_cand_name, str(data.get("candidate_name", "")))
+        _set(self.ed_rec_acad, str(data.get("recognition_academia", "")))
+        _set(self.ed_rec_cert, str(data.get("recognition_certified", "")))
+        _set(self.ed_fullname, str(data.get("contact_full_name", "")))
+        _set(self.ed_email, str(data.get("contact_email", "")))
+        _set(self.ed_phone, str(data.get("contact_phone", "")))
+        _set(self.ed_address, str(data.get("contact_postal_address", "")))
+        _set(self.ed_syllabi, str(data.get("syllabi_integration_description", "")))
+        _set(self.ed_courses, str(data.get("courses_modules_list", "")))
+        _set(self.ed_proof, str(data.get("proof_of_istqb_certifications", "")))
+        _set(self.ed_links, str(data.get("university_links", "")))
+        _set(self.ed_additional, str(data.get("additional_information_documents", "")))
+        _set(self.ed_sigdate, str(data.get("signature_date", "")))
+        _set(self.ed_filename, file_name)
     
-            model.appendRow(items)
+        self._sorted_set_editable(False)
+        self._sorted_set_status("Edited" if edited else "Parsed (unmodified)")
+        # Uložíme aktuální cestu pro Save
+        self._sorted_current_path = abs_path
     
-        proxy = RecordsModel(headers, self)
-        proxy.setSourceModel(model)
-        self.table_sorted.setModel(proxy)
+    def _sorted_set_status(self, txt: Optional[str]) -> None:
+        self.lbl_sorted_status.setText("—" if not txt else txt)
     
-        # Defaultní skrytí Eligibility (10–14)
-        for c in (10, 11, 12, 13, 14):
-            self.table_sorted.setColumnHidden(c, True)
+    def _sorted_set_editable(self, can_edit: bool) -> None:
+        # Board a File name necháme read-only; ostatní podle can_edit
+        for w in (self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
+                  self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname,
+                  self.ed_email, self.ed_phone, self.ed_sigdate):
+            w.setReadOnly(not can_edit)
+        for w in (self.ed_address, self.ed_syllabi, self.ed_courses,
+                  self.ed_proof, self.ed_links, self.ed_additional):
+            w.setReadOnly(not can_edit)
+
+    def _sorted_save_changes(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        from pathlib import Path
     
-        # Obnova aktuálních filtrů
+        abs_path = getattr(self, "_sorted_current_path", None)
+        if not abs_path:
+            QMessageBox.information(self, "Save to DB", "No PDF selected.")
+            return
+    
+        # Sesbírej hodnoty
+        def _get(w):
+            return w.toPlainText() if hasattr(w, "toPlainText") else w.text()
+    
+        new_data = {
+            "board": self.ed_board.text().strip(),
+            "application_type": _get(self.ed_app_type).strip(),
+            "institution_name": _get(self.ed_inst_name).strip(),
+            "candidate_name": _get(self.ed_cand_name).strip(),
+            "recognition_academia": _get(self.ed_rec_acad).strip(),
+            "recognition_certified": _get(self.ed_rec_cert).strip(),
+            "contact_full_name": _get(self.ed_fullname).strip(),
+            "contact_email": _get(self.ed_email).strip(),
+            "contact_phone": _get(self.ed_phone).strip(),
+            "contact_postal_address": _get(self.ed_address).strip(),
+            "syllabi_integration_description": _get(self.ed_syllabi).strip(),
+            "courses_modules_list": _get(self.ed_courses).strip(),
+            "proof_of_istqb_certifications": _get(self.ed_proof).strip(),
+            "university_links": _get(self.ed_links).strip(),
+            "additional_information_documents": _get(self.ed_additional).strip(),
+            "signature_date": _get(self.ed_sigdate).strip(),
+            "file_name": _get(self.ed_filename).strip(),
+            "path": str(Path(abs_path).resolve()),
+        }
+    
+        # Ulož do DB jako edited=True
+        self.sorted_db.mark_edited(Path(abs_path), new_data)
+        self.sorted_db.save()
+    
+        self._sorted_set_editable(False)
+        self._sorted_set_status("Edited")
+    
         try:
-            proxy.set_board(self.board_combo_sorted.currentText())
-        except Exception:
-            pass
-        try:
-            proxy.set_search(self.search_edit_sorted.text())
-        except Exception:
-            pass
-    
-        # Stavová lišta – shrnutí
-        try:
-            # spočítat nalezené .pdf (mimo __archive__)
-            found = 0
-            for p in chosen.rglob("*.pdf"):
-                try:
-                    rel = p.relative_to(chosen)
-                    if "__archive__" in rel.parts:
-                        continue
-                    found += 1
-                except Exception:
-                    continue
-            self.statusBar().showMessage(f"Sorted PDFs found: {found} • Parsed: {len(self.records_sorted)} • Root: {str(chosen)}")
+            self.statusBar().showMessage("Saved to DB.")
         except Exception:
             pass
         

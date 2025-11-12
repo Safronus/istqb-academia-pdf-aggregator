@@ -177,6 +177,12 @@ git push --tags
 ---
 
 ## Changelog
+- **0.5 (2025-11-12):**
+  - **feat:** Redesigned 'Sorted PDFs' tab into a persistent database-backed manager.
+  - **feat:** Added a `database.json` to store, edit, and track data for sorted PDFs.
+  - **feat:** Implemented 'Export to Sorted PDFs' action from the Overview tab using multi-select.
+  - **feat:** Enabled data editing and deletion for records in the Sorted PDFs view.
+  - **fix:** Corrected `SyntaxError` in the database update method.
 - **0.4 — 2025-11-12**
   - **Export dialog** in **Overview**: CSV/XLSX/TXT, board selection (from actual PDF folders), selectable fields, single Save As for multiple formats.
 - **0.3h — 2025‑11‑11**
