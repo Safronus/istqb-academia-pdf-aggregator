@@ -1,21 +1,13 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.10g — 2025-11-12
-### Overview — Sorted indicator by PDF hashes
-- The **Sorted** column is now computed by **cryptographic hash match (SHA‑256)** between the source PDF and any PDF found under **“Sorted PDFs”** (recursive).
-- If a row's file hash matches a hash in “Sorted PDFs”, the indicator shows **Yes**; otherwise it's empty.
-- Hashing uses a **chunked reader** and a small in‑memory **cache** to avoid re‑hashing the same file repeatedly during a session.
-- The indicator refreshes automatically when the Overview table rebuilds or after rescans.
+## Version 0.10h — 2025-11-12
+### Overview — robust 'Sorted' indicator
+- The **Sorted** column is now computed using **SHA‑256** match against PDFs under any folder named **“Sorted PDFs”** (case-insensitive) under **repo root** or **pdf_root**.
+- For each Overview row, the PDF path is inferred from:
+  1) attached record path (if present),
+  2) a direct path in the “File name” cell (if it's a path),
+  3) a recursive search within **pdf_root** by file name.
+- Added internal caches for file hashes and name→path resolution to avoid re-hashing.
+- The logic is applied on table rebuild and rescans.
 
-### Notes
-- No changes to existing UI/behaviour besides the Sorted indicator logic.
-- Fallback filename matching is no longer used; only **hash equality** determines Sorted status.
-- macOS HiDPI friendly; PySide6 only.
-
-### macOS quick start
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m app
-```
+_No UI changes except the indicator value._
