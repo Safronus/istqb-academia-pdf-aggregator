@@ -1358,13 +1358,20 @@ class MainWindow(QMainWindow):
             if str(r.path) == path_str:
                 return r
         return None
+        
+    from typing import Optional
+    from PySide6.QtWidgets import QMessageBox
+    from PySide6.QtGui import QDesktopServices
+    from PySide6.QtCore import QUrl
     
-    def open_selected_pdf_sorted(self) -> None:
-        rec = self._selected_sorted_record()
+    def open_selected_pdf(self) -> None:
+        """Open the PDF file of the currently selected row in Overview."""
+        rec = self._selected_record()
         if not rec:
             QMessageBox.information(self, "Open PDF", "Please select a row first.")
             return
-        QDesktopServices.openUrl(rec.path.as_uri())
+        # macOS-safe: QDesktopServices.openUrl requires QUrl, not a string
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(rec.path)))
 
     # ----- Browser tab -----
     def _build_browser_tab(self) -> None:
@@ -1637,21 +1644,63 @@ class MainWindow(QMainWindow):
             pass
 
     # ----- Actions -----
+    from typing import Optional
+    from PySide6.QtCore import Qt, QModelIndex
+    from PySide6.QtWidgets import QTableView
+    from PySide6.QtCore import QSortFilterProxyModel
+    
     def _selected_record(self) -> Optional[PdfRecord]:
-        sel = self.table.selectionModel()
+        """
+        Return PdfRecord for the *Overview* table selection.
+        Robust to multiple table views in other tabs:
+        - If invoked from a view signal, use sender() if it's a QTableView.
+        - Else, find the Overview table inside self.overview_tab.
+        """
+        # Prefer the signal sender if it's the table view
+        view = None
+        snd = self.sender()
+        if isinstance(snd, QTableView):
+            view = snd
+        else:
+            # Fallback: locate the Overview table within the Overview tab
+            try:
+                if hasattr(self, "overview_tab") and self.overview_tab is not None:
+                    view = self.overview_tab.findChild(QTableView)  # no objectName required
+            except Exception:
+                view = None
+            # Last resort: use self.table if it is a QTableView
+            if view is None and isinstance(getattr(self, "table", None), QTableView):
+                view = self.table
+    
+        if view is None:
+            return None
+    
+        sel = view.selectionModel()
         if not sel or not sel.hasSelection():
             return None
-        index = sel.selectedRows()[0]
-        proxy = self.table.model()
-        FILE_COL = 16
+    
+        # First selected row in the proxy model
+        pindex = sel.selectedRows()[0]
+        proxy = view.model()
         if isinstance(proxy, QSortFilterProxyModel):
-            index = proxy.mapToSource(index)
-            model = proxy.sourceModel()
+            # Map selected proxy row to source row; column doesn't matter for row mapping
+            srow = proxy.mapToSource(proxy.index(pindex.row(), 0)).row()
+            src = proxy.sourceModel()
+            file_col = src.columnCount() - 1  # last column stores filename/full path
+            idx = src.index(srow, file_col)
+            path_str = idx.data(Qt.UserRole + 1) or idx.data()
         else:
-            model = self.table.model()
-        path_str = model.index(index.row(), FILE_COL).data()
-        for r in self.records:
-            if str(r.path) == path_str:
+            src = proxy
+            file_col = src.columnCount() - 1
+            idx = src.index(pindex.row(), file_col)
+            path_str = idx.data(Qt.UserRole + 1) or idx.data()
+    
+        if not path_str:
+            return None
+    
+        # Match against loaded records
+        for r in getattr(self, "records", []):
+            if str(r.path) == str(path_str):
                 return r
         return None
     
@@ -1708,12 +1757,19 @@ class MainWindow(QMainWindow):
         self.rescan()
         self._rebuild_watch_list()
 
+
+    from typing import Optional
+    from PySide6.QtWidgets import QMessageBox
+    from PySide6.QtGui import QDesktopServices
+    from PySide6.QtCore import QUrl   
+    
     def open_selected_pdf(self) -> None:
         rec = self._selected_record()
         if not rec:
             QMessageBox.information(self, "Open PDF", "Please select a row first.")
             return
-        QDesktopServices.openUrl(rec.path.as_uri())
+        # 0.6d: QDesktopServices.openUrl vyžaduje QUrl; posílejme lokální souborový URL
+        QDesktopServices.openUrl(self.QUrl.fromLocalFile(str(rec.path)))
 
     def _open_from_tree(self, index) -> None:
         path = Path(self.fs_model.filePath(index))
