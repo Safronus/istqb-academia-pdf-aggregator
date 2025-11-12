@@ -192,15 +192,18 @@ class MainWindow(QMainWindow):
         """
         Recognized People List:
           - Tabulka: Board, Full Name, Email, Address, Recognition Date, Valid Until, Badge Types, Badge Link
+          - Filtrace: fulltext + checkboxy (Valid / Near expiry / Expired)
           - Akce: Add…, Edit…, Delete, Reload, Save
           - JSON perzistence (recognized_people.json)
           - Fitting sloupců + barevné zvýraznění řádků při přepnutí do záložky
         """
         from PySide6.QtWidgets import (
-            QVBoxLayout, QHBoxLayout, QWidget, QTableView, QPushButton, QHeaderView
+            QVBoxLayout, QHBoxLayout, QWidget, QTableView, QPushButton, QHeaderView,
+            QLineEdit, QCheckBox, QLabel
         )
         from PySide6.QtGui import QStandardItemModel
-        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtCore import Qt, QTimer, QSortFilterProxyModel
+        from datetime import datetime, date
     
         layout = QVBoxLayout(self.recognized_tab)
     
@@ -219,20 +222,92 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.btn_rec_save)
         layout.addLayout(bar)
     
-        # Tabulka + model
+        # FILTRAČNÍ ŘÁDEK (fulltext + 3 checkboxy)
+        filt = QHBoxLayout()
+        self.rec_search = QLineEdit(self.recognized_tab)
+        self.rec_search.setPlaceholderText("Search…")
+        self.rec_chk_valid   = QCheckBox("Valid")
+        self.rec_chk_warning = QCheckBox("Near expiry")
+        self.rec_chk_expired = QCheckBox("Expired")
+        self.rec_chk_valid.setChecked(True)
+        self.rec_chk_warning.setChecked(True)
+        self.rec_chk_expired.setChecked(True)
+        filt.addWidget(QLabel("Filter:"))
+        filt.addWidget(self.rec_search, 1)
+        filt.addSpacing(12)
+        filt.addWidget(self.rec_chk_valid)
+        filt.addWidget(self.rec_chk_warning)
+        filt.addWidget(self.rec_chk_expired)
+        layout.addLayout(filt)
+    
+        # Tabulka + MODEL
         self.tbl_recognized = QTableView(self.recognized_tab)
         self.tbl_recognized.setSelectionBehavior(QTableView.SelectRows)
         self.tbl_recognized.setSelectionMode(QTableView.ExtendedSelection)
         self.tbl_recognized.setSortingEnabled(True)
     
-        # POŘADÍ SLOUPCŮ – Recognition Date hned před Valid Until
+        # Pořadí sloupců (0.10d)
         self._recognized_headers = [
             "Board", "Full Name", "Email", "Address",
             "Recognition Date", "Valid Until", "Badge Types", "Badge Link"
         ]
         self._recognized_model = QStandardItemModel(0, len(self._recognized_headers), self)
         self._recognized_model.setHorizontalHeaderLabels(self._recognized_headers)
-        self.tbl_recognized.setModel(self._recognized_model)
+    
+        # PROXY MODEL pro filtraci
+        class _RecognizedProxy(QSortFilterProxyModel):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.search = ""
+                self.show_valid = True
+                self.show_warn = True
+                self.show_expired = True
+    
+            def _status_for_row(self, row: int) -> str:
+                """Vrátí 'valid' / 'warn' / 'expired' dle 'Valid Until' (col 5)."""
+                try:
+                    idx = self.sourceModel().index(row, 5)
+                    s = self.sourceModel().data(idx)
+                    if not s:
+                        return "valid"
+                    vuntil = datetime.strptime(str(s), "%Y-%m-%d").date()
+                    days_left = (vuntil - date.today()).days
+                    if days_left > 30:
+                        return "valid"
+                    elif days_left >= 0:
+                        return "warn"
+                    else:
+                        return "expired"
+                except Exception:
+                    return "valid"
+    
+            def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
+                # 1) Validitní checkboxy
+                st = self._status_for_row(source_row)
+                if st == "valid" and not self.show_valid:
+                    return False
+                if st == "warn" and not self.show_warn:
+                    return False
+                if st == "expired" and not self.show_expired:
+                    return False
+                # 2) Fulltext přes všechny sloupce
+                if self.search:
+                    s = self.search.lower()
+                    cols = self.sourceModel().columnCount()
+                    found = False
+                    for c in range(cols):
+                        idx = self.sourceModel().index(source_row, c)
+                        val = self.sourceModel().data(idx)
+                        if val and s in str(val).lower():
+                            found = True
+                            break
+                    if not found:
+                        return False
+                return True
+    
+        self._rec_proxy = _RecognizedProxy(self)
+        self._rec_proxy.setSourceModel(self._recognized_model)
+        self.tbl_recognized.setModel(self._rec_proxy)
     
         # Fit sloupců
         hdr = self.tbl_recognized.horizontalHeader()
@@ -257,6 +332,12 @@ class MainWindow(QMainWindow):
         self.btn_rec_reload.clicked.connect(self._recognized_rebuild_model)
         self.btn_rec_save.clicked.connect(lambda: self._save_recognized_json(self._recognized_collect_data()))
     
+        # Filtrační signály
+        self.rec_search.textChanged.connect(lambda _t: self._recognized_update_filter())
+        self.rec_chk_valid.toggled.connect(lambda _b: self._recognized_update_filter())
+        self.rec_chk_warning.toggled.connect(lambda _b: self._recognized_update_filter())
+        self.rec_chk_expired.toggled.connect(lambda _b: self._recognized_update_filter())
+    
         # Po vykreslení dofituj a aplikuj barvy
         QTimer.singleShot(0, self._recognized_fit_columns)
         QTimer.singleShot(0, self._recognized_apply_row_colors)
@@ -268,6 +349,20 @@ class MainWindow(QMainWindow):
                 self._rec_tab_hooked = True
             except Exception:
                 pass
+            
+    def _recognized_update_filter(self) -> None:
+        """Aplikuje hodnoty z fulltextu a checkboxů do proxy a invaliduje filtr."""
+        try:
+            proxy = getattr(self, "_rec_proxy", None)
+            if not proxy:
+                return
+            proxy.search = (self.rec_search.text() or "").strip()
+            proxy.show_valid = bool(self.rec_chk_valid.isChecked())
+            proxy.show_warn = bool(self.rec_chk_warning.isChecked())
+            proxy.show_expired = bool(self.rec_chk_expired.isChecked())
+            proxy.invalidateFilter()
+        except Exception:
+            pass
             
     def _recognized_on_tab_changed(self, index: int) -> None:
         """
@@ -819,20 +914,25 @@ class MainWindow(QMainWindow):
     
     def _recognized_edit(self) -> None:
         """
-        Editace vybraného řádku.
-        V EDIT režimu je výběr zdroje (Sorted) i badge typů irelevantní → v dialogu skryto/zakázáno.
-        Pouze upravíme hodnoty řádku a přepočteme Valid Until (= Recognition Date + 365 dní).
+        Edit vybraného řádku.
+        V EDIT režimu jsou badge typy i volba Sorted zdroje irelevantní (skryty).
+        Výběr z tabulky mapujeme z proxy na zdrojový model.
         """
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import Qt
-        from PySide6.QtGui import QStandardItem
         from datetime import datetime, timedelta
     
         sel = self.tbl_recognized.selectionModel().selectedRows()
         if not sel:
             QMessageBox.information(self, "Edit", "Select a row to edit.")
             return
-        r = sel[0].row()
+        # map proxy -> source row
+        proxy_idx = sel[0]
+        try:
+            src_idx = self._rec_proxy.mapToSource(proxy_idx)
+            r = src_idx.row()
+        except Exception:
+            r = proxy_idx.row()
     
         # Původní hodnoty
         cur = {
@@ -847,47 +947,25 @@ class MainWindow(QMainWindow):
         cur["academia"]  = "academia"  in btxt
         cur["certified"] = "certified" in btxt
     
-        # Otevři dialog v EDIT režimu (badge a Sorted UI disable)
         upd = self._recognized_open_add_dialog(cur)
         if not upd:
             return
     
-        # Kontrola duplicit vůči ostatním řádkům (stejný badge set jako původně)
-        def _dup_exists_excluding_row(full_l, link_l, dstr, acad, cert, skip_row) -> bool:
-            bkey = f"{int(bool(acad))}-{int(bool(cert))}"
-            for rr in range(self._recognized_model.rowCount()):
-                if rr == skip_row:
-                    continue
-                f2 = (self._recognized_model.index(rr,1).data(Qt.DisplayRole) or "").strip().lower()
-                l2 = (self._recognized_model.index(rr,7).data(Qt.DisplayRole) or "").strip().lower()
-                d2 = (self._recognized_model.index(rr,4).data(Qt.DisplayRole) or "").strip()
-                b2s= (self._recognized_model.index(rr,6).data(Qt.DisplayRole) or "").lower()
-                b2 = f"{int('academia' in b2s)}-{int('certified' in b2s)}"
-                if f2 == full_l and (l2 == link_l or (d2 == dstr and b2 == bkey)):
-                    return True
-            return False
-    
-        board = upd.get("board",""); full = upd.get("full_name",""); mail = upd.get("email","")
-        addr = upd.get("address",""); rdate = upd.get("recognition_date",""); link = upd.get("badge_link","")
-        full_l = (full or "").strip().lower()
-        link_l = (link or "").strip().lower()
-        dstr   = (rdate or "").strip()
-    
-        acad_keep = cur["academia"]; cert_keep = cur["certified"]
-    
-        if _dup_exists_excluding_row(full_l, link_l, dstr, acad_keep, cert_keep, r):
-            QMessageBox.information(self, "Duplicate", "This person/badge already exists.")
-            return
-    
-        # Přepočítej Valid Until
+        # Přepočítej Valid Until = +365 dní
         try:
-            dt = datetime.strptime(rdate, "%Y-%m-%d").date()
+            dt = datetime.strptime(upd.get("recognition_date",""), "%Y-%m-%d").date()
             vuntil = (dt + timedelta(days=365)).isoformat()
         except Exception:
             vuntil = ""
     
+        # Badge typy se v EDIT režimu nemění (ponecháme původní)
+        acad_keep = cur["academia"]; cert_keep = cur["certified"]
         badges_txt = "; ".join([s for s,b in (("Academia", acad_keep), ("Certified", cert_keep)) if b])
-        vals = [board, full, mail, addr, rdate, vuntil, badges_txt, link]
+    
+        vals = [
+            upd.get("board",""), upd.get("full_name",""), upd.get("email",""), upd.get("address",""),
+            upd.get("recognition_date",""), vuntil, badges_txt, upd.get("badge_link",""),
+        ]
         for c, v in enumerate(vals):
             self._recognized_model.setData(self._recognized_model.index(r, c), str(v))
     
@@ -934,7 +1012,7 @@ class MainWindow(QMainWindow):
             pass
     
     def _recognized_delete(self) -> None:
-        """Smazání vybraných řádků (s potvrzením)."""
+        """Smazání vybraných řádků (s potvrzením). Mapování výběru z proxy na zdrojový model."""
         from PySide6.QtWidgets import QMessageBox
         sel = self.tbl_recognized.selectionModel().selectedRows()
         if not sel:
@@ -942,9 +1020,16 @@ class MainWindow(QMainWindow):
             return
         if QMessageBox.question(self, "Delete", f"Delete {len(sel)} selected item(s)?") != QMessageBox.Yes:
             return
-        rows = sorted([i.row() for i in sel], reverse=True)
-        for r in rows:
-            self._recognized_model.removeRow(r)    
+        # proxy -> source rows
+        rows = []
+        for pidx in sel:
+            try:
+                sidx = self._rec_proxy.mapToSource(pidx)
+                rows.append(sidx.row())
+            except Exception:
+                rows.append(pidx.row())
+        for r in sorted(set(rows), reverse=True):
+            self._recognized_model.removeRow(r)
 
     def _recognized_fit_columns(self) -> None:
         """Do-fit sloupců po naplnění/změnách."""
