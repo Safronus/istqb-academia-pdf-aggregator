@@ -1,17 +1,17 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.7f — 2025-11-12
-### TXT export (Overview & Sorted) — unified rich report
-- New **TXT report layout** shared by **Overview** and **Sorted PDFs** exports:
-  - **Heading** per record (Institution — Candidate — [Board] or File name).
-  - **Basic info** block (Board, Application Type, Institution, Candidate, Signature Date, File name).
-  - **Sections** with **bulleted subsections** (only when data present):
-    - Recognition (Academia, Certified)
-    - Contact (Full Name, Email, Phone, Postal Address)
-    - Curriculum (Syllabi Integration, Courses/Modules)
-    - Evidence (Proof of ISTQB Certifications, Additional Info/Documents)
-    - Links (University Links)
-- CSV/XLSX remain unchanged.
+## Version 0.8 — 2025-11-12
+### Overview — Board filter with two sections
+- **Board combobox** now shows two sections:
+  1) Boards **present in the current table** (after filters/search)
+  2) ——— separator ———
+  3) Remaining boards from `KNOWN_BOARDS` (alphabetical)
+- Keeps **'All'** as the first item.
+- The list **updates automatically** when Overview data changes (rows inserted/removed/reset or data changed).
+
+### Notes
+- No changes to existing filtering logic; `_filter_board` works as before.
+- Minimal-change: only combobox population and signal wiring.
 
 ### macOS quick start
 ```bash
@@ -22,10 +22,7 @@ python -m app
 ```
 
 ### Recent
-- 0.7f — TXT report layout (Overview & Sorted) with headings, basic info, sections & bullets.
-- 0.7e — Sorted export dialog/options mirror Overview.
-- 0.7d — Sorted export columns/filters/engines same as Overview.
-- 0.7c — add `ed_sigdate` alias.
-- 0.7b — add `ed_rec_acad/ed_rec_cert` + aliases.
-- 0.7a — fix field names/aliases in Sorted builder.
-- 0.6c — scanner: strip leading '/' from Application Type.
+- 0.8 — Overview: Board combobox grouped into present boards + separator + remaining boards.
+- 0.7j — enlarge window and Sorted sizing.
+- 0.7i — global sizing via showEvent; browser auto-fit.
+- 0.7f — TXT report formatting.
