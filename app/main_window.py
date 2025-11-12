@@ -188,11 +188,10 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, self._apply_global_sizing_once)
 
-
     def _build_recognized_tab(self) -> None:
         """
         Recognized People List:
-          - Tabulka: Board, Full Name, Email, Address, Recognition Date, Badge Types, Badge Link, Valid Until
+          - Tabulka: Board, Full Name, Email, Address, Recognition Date, Valid Until, Badge Types, Badge Link
           - Akce: Add…, Edit…, Delete, Reload, Save
           - JSON perzistence (recognized_people.json)
           - Fitting sloupců + barevné zvýraznění řádků při přepnutí do záložky
@@ -226,9 +225,10 @@ class MainWindow(QMainWindow):
         self.tbl_recognized.setSelectionMode(QTableView.ExtendedSelection)
         self.tbl_recognized.setSortingEnabled(True)
     
+        # POŘADÍ SLOUPCŮ – Recognition Date hned před Valid Until
         self._recognized_headers = [
             "Board", "Full Name", "Email", "Address",
-            "Recognition Date", "Badge Types", "Badge Link", "Valid Until"
+            "Recognition Date", "Valid Until", "Badge Types", "Badge Link"
         ]
         self._recognized_model = QStandardItemModel(0, len(self._recognized_headers), self)
         self._recognized_model.setHorizontalHeaderLabels(self._recognized_headers)
@@ -261,7 +261,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._recognized_fit_columns)
         QTimer.singleShot(0, self._recognized_apply_row_colors)
     
-        # Spusť zvýraznění při přepnutí do záložky (jen jednou napoj)
+        # Spusť zvýraznění při přepnutí do záložky (napoj jednorázově)
         if hasattr(self, "tabs") and not getattr(self, "_rec_tab_hooked", False):
             try:
                 self.tabs.currentChanged.connect(self._recognized_on_tab_changed)
@@ -319,8 +319,9 @@ class MainWindow(QMainWindow):
     def _recognized_rebuild_model(self) -> None:
         """
         Načti JSON a naplň model.
-        - Pokud záznam obsahuje oba badge (academia & certified), zobraz ho jako DVA řádky (sdruženě vložené).
-        - 'Valid Until' se přepočítá z 'Recognition Date' (+365 dní), pokud chybí nebo je prázdné.
+        - Pokud záznam obsahuje oba badge (academia & certified), zobraz ho jako DVA řádky (sdruženě).
+        - 'Valid Until' = 'Recognition Date' + 365 dní (přepočet na load).
+        - POŘADÍ SLOUPCŮ: Board, Full Name, Email, Address, Recognition Date, Valid Until, Badge Types, Badge Link
         """
         from PySide6.QtGui import QStandardItem
         from PySide6.QtCore import Qt
@@ -339,13 +340,13 @@ class MainWindow(QMainWindow):
         def _append_row(board, full, mail, addr, rdate, acad, cert, blink):
             badges = "; ".join([s for s, b in (("Academia", acad), ("Certified", cert)) if b])
             vuntil = _valid_until(rdate)
-            vals = [board, full, mail, addr, rdate, badges, blink, vuntil]
+            # nový pořadník
+            vals = [board, full, mail, addr, rdate, vuntil, badges, blink]
             items = [QStandardItem(str(v)) for v in vals]
             for it in items:
                 it.setEditable(False)
             self._recognized_model.appendRow(items)
     
-        # projdi JSON a vkládej 1 nebo 2 řádky
         for rec in data:
             board = rec.get("board", "") or ""
             full  = rec.get("full_name", "") or ""
@@ -362,7 +363,7 @@ class MainWindow(QMainWindow):
             else:
                 _append_row(board, full, mail, addr, rdate, acad, cert, blink)
     
-        self._recognized_fit_columns() 
+        self._recognized_fit_columns()
     
     def _recognized_collect_data(self) -> list[dict]:
         """Převeď model -> JSON list."""
@@ -571,14 +572,10 @@ class MainWindow(QMainWindow):
     
     def _recognized_open_add_dialog(self, initial: dict | None = None) -> dict | None:
         """
-        Otevře dialog pro Add/Edit recognized osobu.
-        - initial: pokud je dict, dialog se předvyplní (Edit režim).
-        - Vrací dict se stejnými klíči jako JSON nebo None při Cancel.
-    
-        OPRAVA (v0.10a):
-        - Radio 'From Sorted PDFs' je vždy povoleno (už se ne-disableuje).
-        - Pokud nejsou kandidáti, combobox je disabled a zobrazí se jemná hláška.
-        - Přidány toggly obou radií na společný handler pro spolehlivé přepínání.
+        Add/Edit dialog pro recognized osobu.
+        - ADD: volba zdroje (From Sorted PDFs / Manual), badge typy editovatelné.
+        - EDIT: zdroj i badge typy jsou irelevantní → skryté/disable; typy zůstávají dle řádku.
+        Vrací dict se stejnými klíči jako JSON nebo None při Cancel.
         """
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit, QPlainTextEdit,
@@ -587,35 +584,36 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import Qt, QDate
         from datetime import timedelta, datetime as _dt
     
+        is_edit = initial is not None
+    
         dlg = QDialog(self)
-        dlg.setWindowTitle("Add recognized person" if initial is None else "Edit recognized person")
+        dlg.setWindowTitle("Edit recognized person" if is_edit else "Add recognized person")
         lay = QVBoxLayout(dlg)
     
-        # Zdroj dat (Sorted vs Manual)
+        # Zdroj dat (Sorted vs Manual) – v EDIT režimu skryjeme
         src_row = QHBoxLayout()
         rb_sorted = QRadioButton("From Sorted PDFs")
         rb_manual = QRadioButton("Manual entry")
-        src_row.addWidget(rb_sorted); src_row.addWidget(rb_manual); src_row.addStretch(1)
-        lay.addLayout(src_row)
+        if not is_edit:
+            src_row.addWidget(rb_sorted); src_row.addWidget(rb_manual); src_row.addStretch(1)
+            lay.addLayout(src_row)
     
-        # Kandidáti ze Sorted DB
+        # Kandidáti ze Sorted DB – v EDIT režimu neukazujeme
         cb_sorted = QComboBox()
-        candidates = self._recognized_candidates_from_sorted()
-        for c in candidates:
-            disp = f"{c.get('full_name','')} — {c.get('email','')} — [{c.get('board','')}]"
-            cb_sorted.addItem(disp, c)
-        lay.addWidget(cb_sorted)
-    
-        # Info label, pokud nejsou kandidáti
         lbl_no_sorted = QLabel("No candidates found in Sorted PDFs database.")
         lbl_no_sorted.setStyleSheet("color: #999;")
-        lay.addWidget(lbl_no_sorted)
-    
-        # Výchozí stav: pokud máme kandidáty, zvol Sorted; jinak Manual (ale radio Sorted NEZAKAZUJEME)
-        if candidates:
-            rb_sorted.setChecked(True)
-        else:
-            rb_manual.setChecked(True)
+        if not is_edit:
+            candidates = self._recognized_candidates_from_sorted()
+            for c in candidates:
+                disp = f"{c.get('full_name','')} — {c.get('email','')} — [{c.get('board','')}]"
+                cb_sorted.addItem(disp, c)
+            lay.addWidget(cb_sorted)
+            lay.addWidget(lbl_no_sorted)
+            # výchozí stav
+            if candidates:
+                rb_sorted.setChecked(True)
+            else:
+                rb_manual.setChecked(True)
     
         # Form
         form = QFormLayout()
@@ -634,14 +632,23 @@ class MainWindow(QMainWindow):
         form.addRow("Email:", ed_mail)
         form.addRow("Address:", ed_addr)
         form.addRow("Recognition Date:", ed_date)
-        form.addRow("Badge Types:", QLabel(""))
-        form.addRow("", chk_acad)
-        form.addRow("", chk_cert)
+        # Badge types – v EDIT režimu jen zobrazíme/disable, v ADD editovatelné
+        if not is_edit:
+            form.addRow("Badge Types:", QLabel(""))
+            form.addRow("", chk_acad)
+            form.addRow("", chk_cert)
+        else:
+            # jen informativní řádek s textem badge, bez checků
+            self._lbl_badges_info = QLabel("(badge type unchanged in Edit)")
+            form.addRow("Badge Types:", self._lbl_badges_info)
+            chk_acad.setVisible(False)
+            chk_cert.setVisible(False)
+    
         form.addRow("Badge Link:", ed_link)
         lay.addLayout(form)
     
         # Předvyplnění z initial (Edit)
-        if initial:
+        if is_edit:
             ed_board.setText(initial.get("board", ""))
             ed_full.setText(initial.get("full_name", ""))
             ed_mail.setText(initial.get("email", ""))
@@ -651,37 +658,38 @@ class MainWindow(QMainWindow):
                 ed_date.setDate(QDate(y, m, d))
             except Exception:
                 pass
+            # Badge typy ponecháváme; jen je držíme v initial
             chk_acad.setChecked(bool(initial.get("academia", False)))
             chk_cert.setChecked(bool(initial.get("certified", False)))
             ed_link.setText(initial.get("badge_link", ""))
-    
-        # Předvyplnění po výběru kandidáta ze Sorted
-        def _apply_candidate():
-            data = cb_sorted.currentData()
-            if not data:
-                return
-            ed_board.setText(data.get("board",""))
-            ed_full.setText(data.get("full_name",""))
-            ed_mail.setText(data.get("email",""))
-            ed_addr.setPlainText(data.get("address",""))
-            # checkboxy dle DB
-            chk_acad.setChecked(bool(data.get("academia", False)))
-            chk_cert.setChecked(bool(data.get("certified", False)))
-    
-        cb_sorted.currentIndexChanged.connect(_apply_candidate)
-        if candidates and not initial:
-            _apply_candidate()
-    
-        # Přepínání zdroje – povol/zakázat combobox, ukaž/skryj info hlášku
-        def _toggle_src():
-            use_sorted = rb_sorted.isChecked()
-            has_data = cb_sorted.count() > 0
-            cb_sorted.setEnabled(use_sorted and has_data)
-            lbl_no_sorted.setVisible(use_sorted and not has_data)
-            # Pole necháváme editovatelná v obou režimech (případné korekce)
-        rb_sorted.toggled.connect(_toggle_src)
-        rb_manual.toggled.connect(_toggle_src)
-        _toggle_src()
+        else:
+            # ADD: předvyplnění po výběru kandidáta ze Sorted
+            def _apply_candidate():
+                data = cb_sorted.currentData()
+                if not data:
+                    return
+                ed_board.setText(data.get("board",""))
+                ed_full.setText(data.get("full_name",""))
+                ed_mail.setText(data.get("email",""))
+                ed_addr.setPlainText(data.get("address",""))
+                chk_acad.setChecked(bool(data.get("academia", False)))
+                chk_cert.setChecked(bool(data.get("certified", False)))
+            cb_sorted.currentIndexChanged.connect(_apply_candidate)
+            # přepínání zdroje
+            def _toggle_src():
+                use_sorted = rb_sorted.isChecked() if not is_edit else False
+                has_data = (cb_sorted.count() > 0) if not is_edit else False
+                if not is_edit:
+                    cb_sorted.setEnabled(use_sorted and has_data)
+                    lbl_no_sorted.setVisible(use_sorted and not has_data)
+            if not is_edit:
+                rb_sorted.toggled.connect(_toggle_src)
+                rb_manual.toggled.connect(_toggle_src)
+                # init
+                if cb_sorted.count() > 0:
+                    rb_sorted.setChecked(True)
+                    _apply_candidate()
+                _toggle_src()
     
         # Tlačítka
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dlg)
@@ -696,8 +704,13 @@ class MainWindow(QMainWindow):
             mail  = ed_mail.text().strip()
             addr  = ed_addr.toPlainText().strip()
             date_str = ed_date.date().toString("yyyy-MM-dd")
-            acad = chk_acad.isChecked()
-            cert = chk_cert.isChecked()
+            # v EDIT režimu použij původní typy, v ADD podle checkboxů
+            if is_edit:
+                acad = bool(initial.get("academia", False))
+                cert = bool(initial.get("certified", False))
+            else:
+                acad = chk_acad.isChecked()
+                cert = chk_cert.isChecked()
             link = ed_link.text().strip()
     
             # Validate
@@ -714,13 +727,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(dlg, "Validation", "Badge Link is required.")
                 return
     
-            # Valid Until (+1 rok)
-            try:
-                dt = _dt.strptime(date_str, "%Y-%m-%d").date()
-                valid_until = (dt + timedelta(days=365)).isoformat()
-            except Exception:
-                valid_until = ""
-    
+            # Valid Until (+365 dní) – počítáme až při ukládání do modelu
             nonlocal result
             result = {
                 "board": board,
@@ -731,7 +738,6 @@ class MainWindow(QMainWindow):
                 "academia": bool(acad),
                 "certified": bool(cert),
                 "badge_link": link,
-                "valid_until": valid_until,
             }
             dlg.accept()
     
@@ -745,6 +751,7 @@ class MainWindow(QMainWindow):
         """
         Přidání osoby. Při volbě obou badge vloží DVA řádky (po kontrole duplicit per-badge).
         Duplikát: (full_name + badge_link) NEBO (full_name + recognition_date + badge-typ).
+        Nový pořádek sloupců: Board, Full Name, Email, Address, Recognition Date, Valid Until, Badge Types, Badge Link.
         """
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtGui import QStandardItem
@@ -766,9 +773,9 @@ class MainWindow(QMainWindow):
             bkey = f"{int(bool(acad))}-{int(bool(cert))}"
             for r in range(self._recognized_model.rowCount()):
                 f2 = (self._recognized_model.index(r, 1).data(Qt.DisplayRole) or "").strip().lower()
-                l2 = (self._recognized_model.index(r, 6).data(Qt.DisplayRole) or "").strip().lower()
-                d2 = (self._recognized_model.index(r, 4).data(Qt.DisplayRole) or "").strip()
-                b2s= (self._recognized_model.index(r, 5).data(Qt.DisplayRole) or "").lower()
+                l2 = (self._recognized_model.index(r, 7).data(Qt.DisplayRole) or "").strip().lower()  # Badge Link
+                d2 = (self._recognized_model.index(r, 4).data(Qt.DisplayRole) or "").strip()          # Recognition Date
+                b2s= (self._recognized_model.index(r, 6).data(Qt.DisplayRole) or "").lower()          # Badge Types
                 b2 = f"{int('academia' in b2s)}-{int('certified' in b2s)}"
                 if f2 == full_l and (l2 == link_l or (d2 == dstr and b2 == bkey)):
                     return True
@@ -789,14 +796,13 @@ class MainWindow(QMainWindow):
         for acad, cert in _badge_rows(new):
             if _dup_exists(full_l, link_l, dstr, acad, cert):
                 continue
-            badges = "; ".join([s for s,b in (("Academia", acad), ("Certified", cert)) if b])
-            # recompute valid until from rdate
             try:
                 dt = datetime.strptime(rdate, "%Y-%m-%d").date()
                 vuntil = (dt + timedelta(days=365)).isoformat()
             except Exception:
                 vuntil = ""
-            vals = [board, full, mail, addr, rdate, badges, link, vuntil]
+            badges = "; ".join([s for s,b in (("Academia", acad), ("Certified", cert)) if b])
+            vals = [board, full, mail, addr, rdate, vuntil, badges, link]
             rows_to_add.append([QStandardItem(str(v)) for v in vals])
     
         if not rows_to_add:
@@ -813,9 +819,9 @@ class MainWindow(QMainWindow):
     
     def _recognized_edit(self) -> None:
         """
-        Editace vybraného řádku. Pokud uživatel vybere oba badge:
-          - aktuální řádek se upraví na jeden z badge (ponecháme jeho původní typ, pokud lze),
-          - chybějící badge se vloží jako NOVÝ řádek (pokud nejde o duplikát).
+        Editace vybraného řádku.
+        V EDIT režimu je výběr zdroje (Sorted) i badge typů irelevantní → v dialogu skryto/zakázáno.
+        Pouze upravíme hodnoty řádku a přepočteme Valid Until (= Recognition Date + 365 dní).
         """
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import Qt
@@ -835,25 +841,27 @@ class MainWindow(QMainWindow):
             "email": self._recognized_model.index(r,2).data(Qt.DisplayRole) or "",
             "address": self._recognized_model.index(r,3).data(Qt.DisplayRole) or "",
             "recognition_date": self._recognized_model.index(r,4).data(Qt.DisplayRole) or "",
-            "badge_link": self._recognized_model.index(r,6).data(Qt.DisplayRole) or "",
+            "badge_link": self._recognized_model.index(r,7).data(Qt.DisplayRole) or "",
         }
-        btxt = (self._recognized_model.index(r,5).data(Qt.DisplayRole) or "").lower()
+        btxt = (self._recognized_model.index(r,6).data(Qt.DisplayRole) or "").lower()
         cur["academia"]  = "academia"  in btxt
         cur["certified"] = "certified" in btxt
     
+        # Otevři dialog v EDIT režimu (badge a Sorted UI disable)
         upd = self._recognized_open_add_dialog(cur)
         if not upd:
             return
     
+        # Kontrola duplicit vůči ostatním řádkům (stejný badge set jako původně)
         def _dup_exists_excluding_row(full_l, link_l, dstr, acad, cert, skip_row) -> bool:
             bkey = f"{int(bool(acad))}-{int(bool(cert))}"
             for rr in range(self._recognized_model.rowCount()):
                 if rr == skip_row:
                     continue
                 f2 = (self._recognized_model.index(rr,1).data(Qt.DisplayRole) or "").strip().lower()
-                l2 = (self._recognized_model.index(rr,6).data(Qt.DisplayRole) or "").strip().lower()
+                l2 = (self._recognized_model.index(rr,7).data(Qt.DisplayRole) or "").strip().lower()
                 d2 = (self._recognized_model.index(rr,4).data(Qt.DisplayRole) or "").strip()
-                b2s= (self._recognized_model.index(rr,5).data(Qt.DisplayRole) or "").lower()
+                b2s= (self._recognized_model.index(rr,6).data(Qt.DisplayRole) or "").lower()
                 b2 = f"{int('academia' in b2s)}-{int('certified' in b2s)}"
                 if f2 == full_l and (l2 == link_l or (d2 == dstr and b2 == bkey)):
                     return True
@@ -865,16 +873,11 @@ class MainWindow(QMainWindow):
         link_l = (link or "").strip().lower()
         dstr   = (rdate or "").strip()
     
-        want_acad = bool(upd.get("academia"))
-        want_cert = bool(upd.get("certified"))
+        acad_keep = cur["academia"]; cert_keep = cur["certified"]
     
-        # Rozhodni, který badge ponechat v aktuálním řádku (preferuj ten, který tam už byl)
-        keep_acad = want_acad and cur["academia"]
-        keep_cert = want_cert and cur["certified"]
-        if not (keep_acad or keep_cert):
-            # pokud se badge změnil, vezmeme první zvolený (prefer Academia)
-            keep_acad = want_acad
-            keep_cert = (not keep_acad) and want_cert
+        if _dup_exists_excluding_row(full_l, link_l, dstr, acad_keep, cert_keep, r):
+            QMessageBox.information(self, "Duplicate", "This person/badge already exists.")
+            return
     
         # Přepočítej Valid Until
         try:
@@ -883,27 +886,13 @@ class MainWindow(QMainWindow):
         except Exception:
             vuntil = ""
     
-        # Update aktuálního řádku
-        badges_keep = "; ".join([s for s,b in (("Academia", keep_acad), ("Certified", keep_cert)) if b])
-        vals = [board, full, mail, addr, rdate, badges_keep, link, vuntil]
+        badges_txt = "; ".join([s for s,b in (("Academia", acad_keep), ("Certified", cert_keep)) if b])
+        vals = [board, full, mail, addr, rdate, vuntil, badges_txt, link]
         for c, v in enumerate(vals):
             self._recognized_model.setData(self._recognized_model.index(r, c), str(v))
     
-        # Pokud je vybrán i druhý badge, který v aktuálním řádku není → vlož nový
-        add_second = (want_acad and not keep_acad) or (want_cert and not keep_cert)
-        if add_second:
-            sec_acad = want_acad and not keep_acad
-            sec_cert = want_cert and not keep_cert
-            if not _dup_exists_excluding_row(full_l, link_l, dstr, sec_acad, sec_cert, r):
-                btxt2 = "; ".join([s for s,b in (("Academia", sec_acad), ("Certified", sec_cert)) if b])
-                items = [QStandardItem(str(v)) for v in [board, full, mail, addr, rdate, btxt2, link, vuntil]]
-                for it in items:
-                    it.setEditable(False)
-                # vlož hned pod aktuální řádek kvůli "sdružení"
-                self._recognized_model.insertRow(r + 1, items)
-    
         self._recognized_fit_columns()
-        self._recognized_apply_row_colors() 
+        self._recognized_apply_row_colors()
         
     def _recognized_apply_row_colors(self) -> None:
         """
@@ -911,6 +900,7 @@ class MainWindow(QMainWindow):
           - > 30 dnů: zelená
           - 0..30 dnů: žlutá
           - < 0 dnů: červená
+        (Valid Until je ve sloupci index 5.)
         """
         from PySide6.QtGui import QColor, QBrush
         from PySide6.QtCore import Qt
@@ -920,7 +910,7 @@ class MainWindow(QMainWindow):
             today = date.today()
             rows = self._recognized_model.rowCount()
             for r in range(rows):
-                vuntil_s = self._recognized_model.index(r, 7).data(Qt.DisplayRole) or ""
+                vuntil_s = self._recognized_model.index(r, 5).data(Qt.DisplayRole) or ""
                 col_brush = None
                 try:
                     vuntil = datetime.strptime(vuntil_s, "%Y-%m-%d").date()
