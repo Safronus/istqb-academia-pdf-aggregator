@@ -166,17 +166,20 @@ class MainWindow(QMainWindow):
         self.browser_tab = QWidget()
         self.sorted_tab = QWidget()
         self.contacts_tab = QWidget()
+        self.recognized_tab = QWidget()
     
         self.tabs.addTab(self.overview_tab, "Overview")
         self.tabs.addTab(self.browser_tab, "PDF Browser")
         self.tabs.addTab(self.sorted_tab, "Sorted PDFs")
         self.tabs.addTab(self.contacts_tab, "Board Contacts")
+        self.tabs.addTab(self.recognized_tab, "Recognized People List")
     
         self._build_menu()
         self._build_overview_tab()
         self._build_browser_tab()
         self._build_sorted_tab()
         self._build_contacts_tab()
+        self._build_recognized_tab()
     
         self.rescan()
         self.rescan_sorted()
@@ -184,6 +187,523 @@ class MainWindow(QMainWindow):
         
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, self._apply_global_sizing_once)
+
+
+
+    def _build_recognized_tab(self) -> None:
+        """
+        Recognized People List:
+          - Tabulka: Board, Full Name, Email, Address, Recognition Date, Badge Types, Badge Link, Valid Until
+          - Akce: Add…, Edit…, Delete, Reload, Save
+          - JSON perzistence (recognized_people.json)
+          - Fitting sloupců podle dat
+        """
+        from PySide6.QtWidgets import (
+            QVBoxLayout, QHBoxLayout, QWidget, QTableView, QPushButton
+        )
+        from PySide6.QtGui import QStandardItemModel
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtWidgets import QHeaderView
+    
+        layout = QVBoxLayout(self.recognized_tab)
+    
+        # Ovládací lišta
+        bar = QHBoxLayout()
+        self.btn_rec_add = QPushButton("Add person…")
+        self.btn_rec_edit = QPushButton("Edit…")
+        self.btn_rec_del  = QPushButton("Delete")
+        self.btn_rec_reload = QPushButton("Reload")
+        self.btn_rec_save = QPushButton("Save")
+        bar.addWidget(self.btn_rec_add)
+        bar.addWidget(self.btn_rec_edit)
+        bar.addWidget(self.btn_rec_del)
+        bar.addStretch(1)
+        bar.addWidget(self.btn_rec_reload)
+        bar.addWidget(self.btn_rec_save)
+        layout.addLayout(bar)
+    
+        # Tabulka + model
+        self.tbl_recognized = QTableView(self.recognized_tab)
+        self.tbl_recognized.setSelectionBehavior(QTableView.SelectRows)
+        self.tbl_recognized.setSelectionMode(QTableView.ExtendedSelection)
+        self.tbl_recognized.setSortingEnabled(True)
+    
+        self._recognized_headers = [
+            "Board", "Full Name", "Email", "Address",
+            "Recognition Date", "Badge Types", "Badge Link", "Valid Until"
+        ]
+        self._recognized_model = QStandardItemModel(0, len(self._recognized_headers), self)
+        self._recognized_model.setHorizontalHeaderLabels(self._recognized_headers)
+        self.tbl_recognized.setModel(self._recognized_model)
+    
+        # Fit sloupců
+        hdr = self.tbl_recognized.horizontalHeader()
+        hdr.setStretchLastSection(True)
+        try:
+            for c in range(len(self._recognized_headers)):
+                from PySide6.QtWidgets import QHeaderView
+                hdr.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        except Exception:
+            try:
+                hdr.setResizeMode(0, QHeaderView.ResizeToContents)  # Qt5 fallback
+            except Exception:
+                pass
+    
+        layout.addWidget(self.tbl_recognized, 1)
+    
+        # Naplň data
+        self._recognized_rebuild_model()
+    
+        # Akce
+        self.btn_rec_add.clicked.connect(self._recognized_add)
+        self.btn_rec_edit.clicked.connect(self._recognized_edit)
+        self.btn_rec_del.clicked.connect(self._recognized_delete)
+        self.btn_rec_reload.clicked.connect(self._recognized_rebuild_model)
+        self.btn_rec_save.clicked.connect(lambda: self._save_recognized_json(self._recognized_collect_data()))
+    
+        # Po vykreslení jemné dofitování
+        QTimer.singleShot(0, self._recognized_fit_columns)
+
+    def _recognized_json_path(self):
+        """Cesta k JSONu s recognized osobami (repo root)."""
+        from pathlib import Path
+        return Path(__file__).resolve().parents[2] / "recognized_people.json"
+
+    def _load_recognized_json(self) -> list[dict]:
+        """Načti JSON (list dictů). Neexistuje-li, vrať []."""
+        import json
+        p = self._recognized_json_path()
+        try:
+            if p.exists():
+                with p.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                    if isinstance(data, list):
+                        return data
+        except Exception:
+            pass
+        return []
+    
+    def _save_recognized_json(self, data: list[dict]) -> None:
+        """Ulož JSON s recognized osobami."""
+        import json
+        p = self._recognized_json_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            try:
+                self.statusBar().showMessage("Recognized people saved.")
+            except Exception:
+                pass
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Save recognized", f"Failed to save recognized_people.json:\n{e}")    
+    
+    def _recognized_rebuild_model(self) -> None:
+        """Načti JSON a naplň model; dopočítej Valid Until; fit sloupce."""
+        from PySide6.QtGui import QStandardItem
+        from PySide6.QtCore import Qt
+        from datetime import datetime, timedelta
+    
+        data = self._load_recognized_json()
+        self._recognized_model.setRowCount(0)
+    
+        def _valid_until(date_str: str) -> str:
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d").date()
+                return (dt + timedelta(days=365)).isoformat()
+            except Exception:
+                return ""
+    
+        for rec in data:
+            board = rec.get("board", "") or ""
+            full  = rec.get("full_name", "") or ""
+            mail  = rec.get("email", "") or ""
+            addr  = rec.get("address", "") or ""
+            rdate = rec.get("recognition_date", "") or ""
+            acad  = bool(rec.get("academia", False))
+            cert  = bool(rec.get("certified", False))
+            blink = rec.get("badge_link", "") or ""
+            vuntil= rec.get("valid_until", "") or _valid_until(rdate)
+    
+            badges = "; ".join([s for s, b in (("Academia", acad), ("Certified", cert)) if b])
+    
+            row = []
+            for val in (board, full, mail, addr, rdate, badges, blink, vuntil):
+                it = QStandardItem(str(val))
+                # vše editovatelné přes Edit dialog; v tabulce ponecháme readonly (abychom hlídali validaci)
+                it.setEditable(False)
+                row.append(it)
+            self._recognized_model.appendRow(row)
+    
+        self._recognized_fit_columns()    
+    
+    def _recognized_collect_data(self) -> list[dict]:
+        """Převeď model -> JSON list."""
+        from PySide6.QtCore import Qt
+        out = []
+        for r in range(self._recognized_model.rowCount()):
+            board = self._recognized_model.index(r, 0).data(Qt.DisplayRole) or ""
+            full  = self._recognized_model.index(r, 1).data(Qt.DisplayRole) or ""
+            mail  = self._recognized_model.index(r, 2).data(Qt.DisplayRole) or ""
+            addr  = self._recognized_model.index(r, 3).data(Qt.DisplayRole) or ""
+            rdate = self._recognized_model.index(r, 4).data(Qt.DisplayRole) or ""
+            badges= (self._recognized_model.index(r, 5).data(Qt.DisplayRole) or "").lower()
+            blink = self._recognized_model.index(r, 6).data(Qt.DisplayRole) or ""
+            vuntil= self._recognized_model.index(r, 7).data(Qt.DisplayRole) or ""
+    
+            acad = "academia" in badges
+            cert = "certified" in badges
+    
+            out.append({
+                "board": board,
+                "full_name": full,
+                "email": mail,
+                "address": addr,
+                "recognition_date": rdate,
+                "academia": acad,
+                "certified": cert,
+                "badge_link": blink,
+                "valid_until": vuntil,
+            })
+        return out    
+    
+    def _recognized_candidates_from_sorted(self) -> list[dict]:
+        """
+        Sestav unikátní kandidáty z DB Sorted PDFs.
+        Vrací list dictů: {board, full_name, email, address, academia(bool), certified(bool)}
+        """
+        out = []
+        seen = set()
+        # očekáváme, že self.sorted_db nebo obdobná struktura existuje
+        sorted_db = getattr(self, "sorted_db", None)
+        if not sorted_db:
+            return out
+    
+        # sorted_db může být dict/list – snaž se robustně projít
+        def _iter_recs(container):
+            if isinstance(container, dict):
+                for v in container.values():
+                    yield v
+            elif isinstance(container, list):
+                for v in container:
+                    yield v
+    
+        for rec in _iter_recs(sorted_db):
+            try:
+                board = getattr(rec, "board", None) or rec.get("board", "")
+                full  = getattr(rec, "contact_full_name", None) or rec.get("contact_full_name", "")
+                mail  = getattr(rec, "contact_email", None) or rec.get("contact_email", "")
+                addr  = getattr(rec, "contact_postal_address", None) or rec.get("contact_postal_address", "")
+                acad  = bool(getattr(rec, "recognition_academia", None) or rec.get("recognition_academia", ""))
+                cert  = bool(getattr(rec, "recognition_certified", None) or rec.get("recognition_certified", ""))
+            except Exception:
+                continue
+            key = (board, full, mail, addr)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({
+                "board": str(board or ""),
+                "full_name": str(full or ""),
+                "email": str(mail or ""),
+                "address": str(addr or ""),
+                "academia": acad,
+                "certified": cert,
+            })
+        return out    
+    
+    def _recognized_open_add_dialog(self, initial: dict | None = None) -> dict | None:
+        """
+        Otevře dialog pro Add/Edit recognized osobu.
+        - initial: pokud je dict, dialog se předvyplní (Edit režim).
+        - Vrací dict se stejnými klíči jako JSON nebo None při Cancel.
+    
+        OPRAVA (v0.10a):
+        - Radio 'From Sorted PDFs' je vždy povoleno (už se ne-disableuje).
+        - Pokud nejsou kandidáti, combobox je disabled a zobrazí se jemná hláška.
+        - Přidány toggly obou radií na společný handler pro spolehlivé přepínání.
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit, QPlainTextEdit,
+            QDialogButtonBox, QRadioButton, QComboBox, QDateEdit, QCheckBox, QMessageBox
+        )
+        from PySide6.QtCore import Qt, QDate
+        from datetime import timedelta, datetime as _dt
+    
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add recognized person" if initial is None else "Edit recognized person")
+        lay = QVBoxLayout(dlg)
+    
+        # Zdroj dat (Sorted vs Manual)
+        src_row = QHBoxLayout()
+        rb_sorted = QRadioButton("From Sorted PDFs")
+        rb_manual = QRadioButton("Manual entry")
+        src_row.addWidget(rb_sorted); src_row.addWidget(rb_manual); src_row.addStretch(1)
+        lay.addLayout(src_row)
+    
+        # Kandidáti ze Sorted DB
+        cb_sorted = QComboBox()
+        candidates = self._recognized_candidates_from_sorted()
+        for c in candidates:
+            disp = f"{c.get('full_name','')} — {c.get('email','')} — [{c.get('board','')}]"
+            cb_sorted.addItem(disp, c)
+        lay.addWidget(cb_sorted)
+    
+        # Info label, pokud nejsou kandidáti
+        lbl_no_sorted = QLabel("No candidates found in Sorted PDFs database.")
+        lbl_no_sorted.setStyleSheet("color: #999;")
+        lay.addWidget(lbl_no_sorted)
+    
+        # Výchozí stav: pokud máme kandidáty, zvol Sorted; jinak Manual (ale radio Sorted NEZAKAZUJEME)
+        if candidates:
+            rb_sorted.setChecked(True)
+        else:
+            rb_manual.setChecked(True)
+    
+        # Form
+        form = QFormLayout()
+        ed_board = QLineEdit()
+        ed_full  = QLineEdit()
+        ed_mail  = QLineEdit()
+        ed_addr  = QPlainTextEdit(); ed_addr.setMinimumHeight(64)
+    
+        ed_date  = QDateEdit(); ed_date.setCalendarPopup(True); ed_date.setDate(QDate.currentDate())
+        chk_acad = QCheckBox("Academia Recognition")
+        chk_cert = QCheckBox("Certified Recognition")
+        ed_link  = QLineEdit()
+    
+        form.addRow("Board:", ed_board)
+        form.addRow("Full Name:", ed_full)
+        form.addRow("Email:", ed_mail)
+        form.addRow("Address:", ed_addr)
+        form.addRow("Recognition Date:", ed_date)
+        form.addRow("Badge Types:", QLabel(""))
+        form.addRow("", chk_acad)
+        form.addRow("", chk_cert)
+        form.addRow("Badge Link:", ed_link)
+        lay.addLayout(form)
+    
+        # Předvyplnění z initial (Edit)
+        if initial:
+            ed_board.setText(initial.get("board", ""))
+            ed_full.setText(initial.get("full_name", ""))
+            ed_mail.setText(initial.get("email", ""))
+            ed_addr.setPlainText(initial.get("address", ""))
+            try:
+                y, m, d = map(int, (initial.get("recognition_date","") or "2000-01-01").split("-"))
+                ed_date.setDate(QDate(y, m, d))
+            except Exception:
+                pass
+            chk_acad.setChecked(bool(initial.get("academia", False)))
+            chk_cert.setChecked(bool(initial.get("certified", False)))
+            ed_link.setText(initial.get("badge_link", ""))
+    
+        # Předvyplnění po výběru kandidáta ze Sorted
+        def _apply_candidate():
+            data = cb_sorted.currentData()
+            if not data:
+                return
+            ed_board.setText(data.get("board",""))
+            ed_full.setText(data.get("full_name",""))
+            ed_mail.setText(data.get("email",""))
+            ed_addr.setPlainText(data.get("address",""))
+            # checkboxy dle DB
+            chk_acad.setChecked(bool(data.get("academia", False)))
+            chk_cert.setChecked(bool(data.get("certified", False)))
+    
+        cb_sorted.currentIndexChanged.connect(_apply_candidate)
+        if candidates and not initial:
+            _apply_candidate()
+    
+        # Přepínání zdroje – povol/zakázat combobox, ukaž/skryj info hlášku
+        def _toggle_src():
+            use_sorted = rb_sorted.isChecked()
+            has_data = cb_sorted.count() > 0
+            cb_sorted.setEnabled(use_sorted and has_data)
+            lbl_no_sorted.setVisible(use_sorted and not has_data)
+            # Pole necháváme editovatelná v obou režimech (případné korekce)
+        rb_sorted.toggled.connect(_toggle_src)
+        rb_manual.toggled.connect(_toggle_src)
+        _toggle_src()
+    
+        # Tlačítka
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, dlg)
+        lay.addWidget(btns)
+    
+        result: dict | None = None
+    
+        def _accept():
+            # Collect
+            board = ed_board.text().strip()
+            full  = ed_full.text().strip()
+            mail  = ed_mail.text().strip()
+            addr  = ed_addr.toPlainText().strip()
+            date_str = ed_date.date().toString("yyyy-MM-dd")
+            acad = chk_acad.isChecked()
+            cert = chk_cert.isChecked()
+            link = ed_link.text().strip()
+    
+            # Validate
+            if not full:
+                QMessageBox.information(dlg, "Validation", "Full Name is required.")
+                return
+            if not (acad or cert):
+                QMessageBox.information(dlg, "Validation", "Select at least one badge type.")
+                return
+            if not date_str:
+                QMessageBox.information(dlg, "Validation", "Recognition Date is required.")
+                return
+            if not link:
+                QMessageBox.information(dlg, "Validation", "Badge Link is required.")
+                return
+    
+            # Valid Until (+1 rok)
+            try:
+                dt = _dt.strptime(date_str, "%Y-%m-%d").date()
+                valid_until = (dt + timedelta(days=365)).isoformat()
+            except Exception:
+                valid_until = ""
+    
+            nonlocal result
+            result = {
+                "board": board,
+                "full_name": full,
+                "email": mail,
+                "address": addr,
+                "recognition_date": date_str,
+                "academia": bool(acad),
+                "certified": bool(cert),
+                "badge_link": link,
+                "valid_until": valid_until,
+            }
+            dlg.accept()
+    
+        btns.accepted.connect(_accept)
+        btns.rejected.connect(dlg.reject)
+    
+        dlg.resize(640, 520)
+        return result if dlg.exec_() == QDialog.Accepted else None
+    
+    def _recognized_add(self) -> None:
+        """Přidání nové osoby s badge (s kontrolou duplikátů)."""
+        from PySide6.QtWidgets import QMessageBox
+        new = self._recognized_open_add_dialog(None)
+        if not new:
+            return
+    
+        # Duplikáty: (full_name + badge_link) nebo (full_name + date + badge set)
+        def _badge_key(d: dict) -> str:
+            return f"{int(bool(d.get('academia')))}-{int(bool(d.get('certified')))}"
+    
+        full = (new.get("full_name","") or "").strip().lower()
+        link = (new.get("badge_link","") or "").strip().lower()
+        dstr = (new.get("recognition_date","") or "").strip()
+        bkey = _badge_key(new)
+    
+        for rec in self._recognized_collect_data():
+            if (rec.get("full_name","").strip().lower() == full and
+                (rec.get("badge_link","").strip().lower() == link or
+                 (rec.get("recognition_date","").strip() == dstr and _badge_key(rec) == bkey))):
+                QMessageBox.information(self, "Duplicate", "This person/badge already exists.")
+                return
+    
+        # Vložit do modelu
+        from PySide6.QtGui import QStandardItem
+        row_vals = [
+            new.get("board",""), new.get("full_name",""), new.get("email",""), new.get("address",""),
+            new.get("recognition_date",""),
+            "; ".join([s for s,b in (("Academia", new.get("academia")), ("Certified", new.get("certified"))) if b]),
+            new.get("badge_link",""), new.get("valid_until",""),
+        ]
+        items = [QStandardItem(str(v)) for v in row_vals]
+        for it in items: it.setEditable(False)
+        self._recognized_model.appendRow(items)
+        self._recognized_fit_columns()    
+    
+    def _recognized_edit(self) -> None:
+        """Editace vybrané osoby (první ze selection)."""
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import Qt
+        sel = self.tbl_recognized.selectionModel().selectedRows()
+        if not sel:
+            QMessageBox.information(self, "Edit", "Select a row to edit.")
+            return
+        r = sel[0].row()
+    
+        # Připrav initial
+        cur = {
+            "board": self._recognized_model.index(r,0).data(Qt.DisplayRole) or "",
+            "full_name": self._recognized_model.index(r,1).data(Qt.DisplayRole) or "",
+            "email": self._recognized_model.index(r,2).data(Qt.DisplayRole) or "",
+            "address": self._recognized_model.index(r,3).data(Qt.DisplayRole) or "",
+            "recognition_date": self._recognized_model.index(r,4).data(Qt.DisplayRole) or "",
+            "badge_link": self._recognized_model.index(r,6).data(Qt.DisplayRole) or "",
+        }
+        badges = (self._recognized_model.index(r,5).data(Qt.DisplayRole) or "").lower()
+        cur["academia"] = "academia" in badges
+        cur["certified"] = "certified" in badges
+    
+        upd = self._recognized_open_add_dialog(cur)
+        if not upd:
+            return
+    
+        # Duplikáty proti ostatním řádkům (mimo aktuální)
+        def _badge_key(d: dict) -> str:
+            return f"{int(bool(d.get('academia')))}-{int(bool(d.get('certified')))}"
+    
+        full = (upd.get("full_name","") or "").strip().lower()
+        link = (upd.get("badge_link","") or "").strip().lower()
+        dstr = (upd.get("recognition_date","") or "").strip()
+        bkey = _badge_key(upd)
+    
+        from PySide6.QtCore import Qt
+        for rr in range(self._recognized_model.rowCount()):
+            if rr == r: 
+                continue
+            f2 = (self._recognized_model.index(rr,1).data(Qt.DisplayRole) or "").strip().lower()
+            l2 = (self._recognized_model.index(rr,6).data(Qt.DisplayRole) or "").strip().lower()
+            d2 = (self._recognized_model.index(rr,4).data(Qt.DisplayRole) or "").strip()
+            b2s= (self._recognized_model.index(rr,5).data(Qt.DisplayRole) or "").lower()
+            b2 = f"{int('academia' in b2s)}-{int('certified' in b2s)}"
+            if f2 == full and (l2 == link or (d2 == dstr and b2 == bkey)):
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, "Duplicate", "This person/badge already exists.")
+                return
+    
+        # Zapiš změny
+        vals = [
+            upd.get("board",""), upd.get("full_name",""), upd.get("email",""), upd.get("address",""),
+            upd.get("recognition_date",""),
+            "; ".join([s for s,b in (("Academia", upd.get("academia")), ("Certified", upd.get("certified"))) if b]),
+            upd.get("badge_link",""), upd.get("valid_until",""),
+        ]
+        for c, val in enumerate(vals):
+            self._recognized_model.setData(self._recognized_model.index(r, c), str(val))
+        self._recognized_fit_columns()    
+    
+    def _recognized_delete(self) -> None:
+        """Smazání vybraných řádků (s potvrzením)."""
+        from PySide6.QtWidgets import QMessageBox
+        sel = self.tbl_recognized.selectionModel().selectedRows()
+        if not sel:
+            QMessageBox.information(self, "Delete", "Select one or more rows to delete.")
+            return
+        if QMessageBox.question(self, "Delete", f"Delete {len(sel)} selected item(s)?") != QMessageBox.Yes:
+            return
+        rows = sorted([i.row() for i in sel], reverse=True)
+        for r in rows:
+            self._recognized_model.removeRow(r)    
+
+    def _recognized_fit_columns(self) -> None:
+        """Do-fit sloupců po naplnění/změnách."""
+        try:
+            hdr = self.tbl_recognized.horizontalHeader()
+            for c in range(self._recognized_model.columnCount()):
+                self.tbl_recognized.resizeColumnToContents(c)
+            hdr.setStretchLastSection(True)
+        except Exception:
+            pass
 
     # ----- Menu / actions -----
     def _build_menu(self) -> None:
