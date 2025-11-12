@@ -1282,17 +1282,17 @@ class MainWindow(QMainWindow):
     # ----- Overview tab -----
     def _build_overview_tab(self) -> None:
         from PySide6.QtWidgets import (
-            QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-            QPushButton, QTableView, QToolButton, QMenu, QCheckBox, QStyle
+            QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton,
+            QTableView, QToolButton, QMenu, QCheckBox, QStyle, QApplication,
+            QStyledItemDelegate, QStyleOptionViewItem
         )
+        from PySide6.QtGui import QStandardItemModel, QIcon, QPainter
         from PySide6.QtCore import Qt, QTimer
-        from PySide6.QtGui import QStandardItemModel, QIcon, QPainter, QBrush
-        from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QApplication
     
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # === Unparsed tlačítko ===
+        # Unparsed
         self.btn_unparsed = QToolButton(self)
         self.btn_unparsed.setText("Unparsed")
         self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
@@ -1301,7 +1301,7 @@ class MainWindow(QMainWindow):
         self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
         self.btn_unparsed.clicked.connect(self.show_unparsed_report)
     
-        # === Export ===
+        # Export (Overview)
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
@@ -1309,28 +1309,26 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.on_export_overview)
         controls.addWidget(self.btn_export)
     
-        # === Board filtr ===
+        # Board combobox – model naplníme ve _rebuild_board_combo()
         self.board_combo = QComboBox()
-        self.board_combo.addItem("All")
-        for b in sorted(KNOWN_BOARDS):
-            self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
-        # === Fulltext ===
+        # Fulltext
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
     
-        # === Open Selected PDF ===
+        # Open Selected PDF
         self.open_btn = QPushButton("Open Selected PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
     
-        # === Checkbox "Sorted" (filter) ===
+        # Checkbox Sorted (filtr ve view)
         self.chk_overview_sorted = QCheckBox("Sorted")
         self.chk_overview_sorted.setToolTip("Show/hide records that are already in 'Sorted PDFs'")
         self.chk_overview_sorted.setChecked(True)
         self.chk_overview_sorted.toggled.connect(self._on_overview_sorted_toggled)
     
+        # Controls layout
         controls.addWidget(self.btn_unparsed)
         controls.addSpacing(12)
         controls.addWidget(QLabel("Board:"))
@@ -1344,17 +1342,17 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.open_btn)
         layout.addLayout(controls)
     
-        # === Tabulka Overview ===
+        # Tabulka Overview
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.ExtendedSelection)  # multiselect
+        self.table.setSelectionMode(QTableView.ExtendedSelection)
         self.table.doubleClicked.connect(self.open_selected_pdf)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # === HLAVIČKY (poslední "Sorted") ===
+        # Hlavičky – poslední sloupec Sorted
         self._headers = [
             "Board",
             "Application\nApplication Type",
@@ -1390,20 +1388,17 @@ class MainWindow(QMainWindow):
             self._proxy.setDynamicSortFilter(True)
         self.table.setModel(self._proxy)
     
-        # Delegate, který vykreslí ikony uprostřed buňky
+        # Delegát pro centrování ikon
         class IconCenterDelegate(QStyledItemDelegate):
             def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
                 icon = index.data(Qt.DecorationRole)
                 if icon:
                     opt = QStyleOptionViewItem(option)
                     self.initStyleOption(opt, index)
-                    # vykresli background/selection bez textu/ikony
-                    txt, deco = opt.text, opt.icon
-                    opt.text = ""
-                    opt.icon = QIcon()
-                    style = QApplication.style() if opt.widget is None else opt.widget.style()
-                    style.drawControl(QStyle.CE_ItemViewItem, opt, painter)
-                    # vykresli ikonu doprostřed
+                    txt, ico = opt.text, opt.icon
+                    opt.text, opt.icon = "", QIcon()
+                    style = option.widget.style() if option.widget else QApplication.style()
+                    style.drawControl(QStyle.CE_ItemViewItem, opt, painter, option.widget)
                     pm = icon.pixmap(opt.decorationSize if opt.decorationSize.isValid() else opt.rect.size())
                     x = opt.rect.x() + (opt.rect.width() - pm.width()) // 2
                     y = opt.rect.y() + (opt.rect.height() - pm.height()) // 2
@@ -1411,11 +1406,10 @@ class MainWindow(QMainWindow):
                 else:
                     super().paint(painter, option, index)
     
-        # Hiding delegate pro Board
+        # Hiding delegát pro Board
         self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
     
-        # === Přidání IconCenterDelegate na Wished + Sorted ===
-        from PySide6.QtWidgets import QHeaderView
+        # Najdi indexy sloupců
         def _find_col_tail(tail: str) -> int | None:
             for i, h in enumerate(self._headers):
                 t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
@@ -1438,7 +1432,7 @@ class MainWindow(QMainWindow):
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # Kontextové menu – export do Sorted (beze změny)
+        # Kontextové menu – export do Sorted (po exportu jednorázově zreviduj Sorted sloupec)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         def _ctx(pos):
             idx = self.table.indexAt(pos)
@@ -1450,6 +1444,12 @@ class MainWindow(QMainWindow):
             chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
             if chosen == act_export_sorted:
                 self.export_selected_to_sorted()
+                # minimální doplněk: po exportu přepočti Sorted + aplikuj hiding (tiché, bez zásahu do výběru)
+                try:
+                    self._overview_update_sorted_flags()
+                    self._overview_apply_sorted_row_hiding()
+                except Exception:
+                    pass
         if not hasattr(self, "_overview_ctx_connected"):
             self.table.customContextMenuRequested.connect(_ctx)
             self._overview_ctx_connected = True
@@ -1457,27 +1457,18 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
     
-        # === Post-build: jednorázový refresh ikon Sorted + hiding ===
+        # Po vystavění: jednorázově spočti Sorted a rebuildni Board combobox
         def _post_build():
             try:
-                self._overview_update_sorted_flags()
+                self._overview_update_sorted_flags()   # jen jednou
                 self._overview_apply_sorted_row_hiding()
+                self._rebuild_board_combo()
             except Exception:
                 pass
         QTimer.singleShot(0, _post_build)
     
-        # === Méně rušivé hooky: pouze reset/insert + změna řazení (kvůli stabilitě výběru) ===
-        def _reapply():
-            try:
-                self._overview_update_sorted_flags()
-                self._overview_apply_sorted_row_hiding()
-            except Exception:
-                pass
-    
+        # Při změně řazení pouze aplikuj hiding (nepřepočítávej Sorted)
         try:
-            self._source_model.modelReset.connect(_reapply)
-            self._source_model.rowsInserted.connect(lambda *_: _reapply())
-            # Reaplikuj po změně řazení (změní se vizuální pořadí)
             self.table.horizontalHeader().sortIndicatorChanged.connect(lambda *_: self._overview_apply_sorted_row_hiding())
         except Exception:
             pass
@@ -1554,80 +1545,56 @@ class MainWindow(QMainWindow):
     
     def _overview_update_sorted_flags(self) -> None:
         """
-        Aktualizuje POSLEDNÍ sloupec 'Sorted':
-          - DisplayRole: 'Yes' / ''
-          - DecorationRole: check ikona pro 'Yes'
-          - TextAlignmentRole: center
-          - BackgroundRole: světle šedé podbarvení celé buňky ve sloupci 'Sorted'
-        Vše probíhá „safe“: bez zahlcení signály a bez rozhození výběru.
+        Dosadí do POSLEDNÍHO sloupce 'Sorted' hodnotu 'Yes'/'' + ikonku (DecorationRole),
+        centrování (TextAlignmentRole) a světle šedé pozadí (BackgroundRole).
+        Tichý in-place update: NEMĚNÍ výběr řádků.
         """
-        from PySide6.QtCore import Qt, QSignalBlocker
+        from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QStyle
         from PySide6.QtGui import QBrush, QColor
     
-        if getattr(self, "_overview_updating_sorted", False):
+        # sloupce
+        fn_col = self._overview_find_col("File name")
+        sorted_col = self._overview_find_col("Sorted")
+        if fn_col is None or sorted_col is None:
             return
-        self._overview_updating_sorted = True
-        try:
-            fn_col = self._overview_find_col("File name")
-            sorted_col = self._overview_find_col("Sorted")
-            if fn_col is None or sorted_col is None:
-                return
+        if not hasattr(self, "_source_model"):
+            return
     
-            # předpočítané hashe 'Sorted PDFs'
-            sorted_hashes = self._collect_sorted_hashes()
-            icon_ok = self.style().standardIcon(QStyle.SP_DialogApplyButton)
-            bg_brush = QBrush(QColor(240, 240, 240))  # světle šedé podbarvení
+        # připrav hashe Sorted a zdroje pro roli
+        sorted_hashes = self._collect_sorted_hashes()
+        icon_ok = self.style().standardIcon(QStyle.SP_DialogApplyButton)
+        bg_brush = QBrush(QColor(240, 240, 240))  # světlá šedá
     
-            # Ztiš repainty a signály výběru během hromadné aktualizace
-            blk_sel = QSignalBlocker(self.table.selectionModel())
-            blk_view = QSignalBlocker(self.table)
-            self.table.setUpdatesEnabled(False)
+        rows = self._source_model.rowCount()
+        for r in range(rows):
+            idx_fn = self._source_model.index(r, fn_col)
+            fname = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
+    
+            mark = ""
             try:
-                rows = self._source_model.rowCount()
-                for r in range(rows):
-                    idx_fn = self._source_model.index(r, fn_col)
-                    fname = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
+                path = self._find_record_path_for_filename(fname)
+                if path:
+                    dig = self._hash_file(path)
+                    if dig and dig in sorted_hashes:
+                        mark = "Yes"
+            except Exception:
+                mark = ""
     
-                    # spočti hash pro daný soubor → mark
-                    mark = ""
-                    try:
-                        path = self._find_record_path_for_filename(fname)
-                        if path:
-                            dig = self._hash_file(path)
-                            if dig and dig in sorted_hashes:
-                                mark = "Yes"
-                    except Exception:
-                        mark = ""
-    
-                    idx_sorted = self._source_model.index(r, sorted_col)
-                    cur_text = self._source_model.data(idx_sorted, Qt.DisplayRole) or ""
-                    # nastav pouze, když se mění – sníží se šum dataChanged
-                    if cur_text != mark:
-                        self._source_model.setData(idx_sorted, mark, Qt.DisplayRole)
-    
-                    # centrování + ikona + podbarvení
-                    self._source_model.setData(idx_sorted, Qt.AlignCenter, Qt.TextAlignmentRole)
-                    self._source_model.setData(idx_sorted, icon_ok if mark == "Yes" else None, Qt.DecorationRole)
-                    self._source_model.setData(idx_sorted, bg_brush, Qt.BackgroundRole)
-            finally:
-                self.table.setUpdatesEnabled(True)
-                del blk_sel, blk_view
-                # viewport překresli až nakonec
-                self.table.viewport().update()
-        finally:
-            self._overview_updating_sorted = False
+            idx_sorted = self._source_model.index(r, sorted_col)
+            # nastav pouze data/role (žádné zásahy do selection)
+            if (self._source_model.data(idx_sorted, Qt.DisplayRole) or "") != mark:
+                self._source_model.setData(idx_sorted, mark, Qt.DisplayRole)
+            self._source_model.setData(idx_sorted, Qt.AlignCenter, Qt.TextAlignmentRole)
+            self._source_model.setData(idx_sorted, icon_ok if mark == "Yes" else None, Qt.DecorationRole)
+            self._source_model.setData(idx_sorted, bg_brush, Qt.BackgroundRole)
             
     def _overview_apply_sorted_row_hiding(self) -> None:
         """
-        Skryje/ukáže řádky podle checkboxu 'Sorted' (Yes = skrýt, když je checkbox OFF).
-        Safe varianta:
-          - blokuje signály výběru
-          - pozastaví repainty
-          - mění pouze řádky, kde se stav skutečně liší
+        Skryje/ukáže řádky podle checkboxu 'Sorted'.
+        Nepřepočítává Sorted; pouze čte DisplayRole v proxy.
         """
-        from PySide6.QtCore import Qt, QSignalBlocker
-        from PySide6.QtWidgets import QAbstractItemView
+        from PySide6.QtCore import Qt
     
         if not hasattr(self, "table") or not hasattr(self, "_proxy"):
             return
@@ -1636,27 +1603,11 @@ class MainWindow(QMainWindow):
             return
     
         show_sorted = bool(self.chk_overview_sorted.isChecked())
-    
-        # ztiš výběr a repainty na dobu skrývání
-        sel_model = self.table.selectionModel()
-        blk_sel = QSignalBlocker(sel_model)
-        blk_view = QSignalBlocker(self.table)
-        self.table.setUpdatesEnabled(False)
-    
-        try:
-            rows = self._proxy.rowCount()
-            for r in range(rows):
-                idx = self._proxy.index(r, sorted_col)
-                val = self._proxy.data(idx, Qt.DisplayRole) or ""
-                want_hide = (val == "Yes") and (not show_sorted)
-                # měň jen pokud je rozdíl
-                cur_hidden = self.table.isRowHidden(r)
-                if cur_hidden != want_hide:
-                    self.table.setRowHidden(r, want_hide)
-        finally:
-            self.table.setUpdatesEnabled(True)
-            del blk_sel, blk_view
-            self.table.viewport().update()
+        rows = self._proxy.rowCount()
+        for r in range(rows):
+            idx = self._proxy.index(r, sorted_col)
+            val = self._proxy.data(idx, Qt.DisplayRole) or ""
+            self.table.setRowHidden(r, (val == "Yes") and (not show_sorted))
         
     def _on_overview_sorted_toggled(self, checked: bool) -> None:
         """
@@ -1672,7 +1623,7 @@ class MainWindow(QMainWindow):
         Zjisti Path k PDF pro Overview řádek:
           1) pokud v self.records existuje rec.path s tímto názvem,
           2) pokud 'fname' v buňce je už plná cesta a existuje,
-          3) rekurzivně vyhledej pod pdf_root.
+          3) rekurzivně vyhledej pod pdf_root (case-insensitive podle názvu).
         Cache: self._fname_to_path_cache
         """
         from pathlib import Path
@@ -1685,7 +1636,7 @@ class MainWindow(QMainWindow):
         if fname in self._fname_to_path_cache:
             return self._fname_to_path_cache[fname]
     
-        # 2) Buňka může obsahovat plnou cestu
+        # plná cesta v buňce?
         try:
             p = Path(fname)
             if p.exists() and p.is_file():
@@ -1694,28 +1645,23 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
     
-        # 1) records -> path
+        # záznamy -> path
         try:
             for rec in (getattr(self, "records", None) or []):
                 p = getattr(rec, "path", None)
                 if p:
-                    try:
-                        pp = Path(p)
-                        if pp.name == fname or str(pp) == fname:
-                            self._fname_to_path_cache[fname] = pp
-                            return pp
-                    except Exception:
-                        pass
+                    pp = Path(p)
+                    if pp.name == fname or str(pp) == fname:
+                        self._fname_to_path_cache[fname] = pp
+                        return pp
         except Exception:
             pass
     
-        # 3) fallback – najít pod pdf_root
+        # vyhledat pod pdf_root
         try:
             root = getattr(self, "pdf_root", None)
             if root:
-                from pathlib import Path
                 root = Path(root)
-                # case-insensitive hledání názvu
                 target = fname.lower()
                 for pp in root.rglob("*.pdf"):
                     try:
@@ -1729,10 +1675,34 @@ class MainWindow(QMainWindow):
     
         self._fname_to_path_cache[fname] = None
         return None
+    
+    def _enumerate_all_pdfs(self) -> list[str]:
+        """
+        Vrátí list absolutních cest na *.pdf pod self.pdf_root (rekurzivně),
+        s ignorováním jakékoli složky '__archive__'.
+        """
+        from pathlib import Path
+        root = getattr(self, "pdf_root", None)
+        if not root:
+            return []
+        root = Path(root).resolve()
+        out: list[str] = []
+        try:
+            for p in root.rglob("*.pdf"):
+                try:
+                    rel = p.resolve().relative_to(root)
+                    if "__archive__" in rel.parts:
+                        continue
+                    out.append(str(p.resolve()))
+                except Exception:
+                    out.append(str(p.resolve()))
+        except Exception:
+            pass
+        return out
         
     def _collect_sorted_hashes(self) -> set[str]:
         """
-        Vrátí set SHA-256 hashů všech PDF ve složce(ách) 'Sorted PDFs'.
+        Vrátí set SHA-256 hashů všech PDF ve složce(ách) 'Sorted PDFs' (rekurzivně).
         """
         hashes: set[str] = set()
         try:
@@ -1743,8 +1713,7 @@ class MainWindow(QMainWindow):
                         dig = self._hash_file(p)
                         if dig:
                             hashes.add(dig)
-                    # stačí první nalezená složka
-                    break
+                    break  # stačí první nalezená složka
                 except Exception:
                     continue
         except Exception:
@@ -1754,7 +1723,7 @@ class MainWindow(QMainWindow):
     def _find_sorted_dirs(self):
         """
         Najdi složky 'Sorted PDFs' (case-insensitive) pod pdf_root i pod repo rootem.
-        Vrací list Path; první nalezená se použije v _collect_sorted_hashes.
+        Vrací list Path; první nalezená se použije v _collect_sorted_hashes().
         """
         from pathlib import Path
         cand = []
@@ -1769,12 +1738,11 @@ class MainWindow(QMainWindow):
     
         for root in roots:
             try:
-                # 1) Přímé pokusy (běžný název)
                 direct = root / "Sorted PDFs"
                 if direct.exists() and direct.is_dir():
                     cand.append(direct)
                     continue
-                # 2) Case-insensitive v 1–2 úrovních
+                # jedno patro dolů (case-insensitive)
                 for d in [root] + [p for p in root.iterdir() if p.is_dir()]:
                     for sub in d.iterdir():
                         if sub.is_dir() and sub.name.lower() in names:
@@ -1814,69 +1782,64 @@ class MainWindow(QMainWindow):
         
     def _rebuild_board_combo(self) -> None:
         """
-        Naplní Board combobox dvěma sekcemi:
-          - nejdřív boardy přítomné v aktuální Overview tabulce (po všech filtrech),
-          - oddělovač,
-          - zbývající boardy z KNOWN_BOARDS (abecedně).
-        'All' zůstává první. Zachová aktuální volbu, pokud je k dispozici.
+        Sestaví combobox se dvěma sekcemi:
+          - All
+          - [boards přítomné v Overview]
+          - (separator – disabled item)
+          - [zbylé KNOWN_BOARDS]
+        Zachová aktuální výběr, pokud je to možné.
         """
+        from PySide6.QtGui import QStandardItemModel, QStandardItem
         from PySide6.QtCore import Qt
     
-        combo = getattr(self, "board_combo", None)
-        proxy = getattr(self, "_proxy", None)
-        source = getattr(self, "_source_model", None)
-        if combo is None or proxy is None or source is None:
-            return
-    
-        # zapamatuj si výběr
-        current_text = combo.currentText() if combo.count() else "All"
-    
-        # sesbírej present boards z PROXY pohledu (sloupec 0 = Board)
-        present = set()
         try:
-            for r in range(proxy.rowCount()):
-                pidx = proxy.index(r, 0)
-                if not pidx.isValid():
-                    continue
-                sidx = proxy.mapToSource(pidx)
-                val = source.data(sidx, Qt.DisplayRole)
-                if val:
-                    present.add(str(val))
+            prev = self.board_combo.currentText()
         except Exception:
-            # fallback: vezmi vše ze source
-            try:
-                for r in range(source.rowCount()):
-                    val = source.index(r, 0).data(Qt.DisplayRole)
-                    if val:
-                        present.add(str(val))
-            except Exception:
-                pass
+            prev = "All"
     
-        present_sorted = sorted(present)
-        remaining_sorted = [b for b in sorted(KNOWN_BOARDS) if b not in present]
-    
-        # naplň combobox
+        present: set[str] = set()
         try:
-            combo.blockSignals(True)
-            combo.clear()
-            combo.addItem("All")
-            for b in present_sorted:
-                combo.addItem(b)
-            if remaining_sorted:
-                # separator mezi sekce
-                combo.insertSeparator(combo.count())
-                for b in remaining_sorted:
-                    combo.addItem(b)
+            rows = self._source_model.rowCount()
+            for r in range(rows):
+                val = self._source_model.index(r, 0).data(Qt.DisplayRole) or ""
+                if val:
+                    present.add(val)
+        except Exception:
+            pass
     
-            # obnov výběr, pokud existuje; jinak nech "All"
-            for i in range(combo.count()):
-                if combo.itemText(i) == current_text:
-                    combo.setCurrentIndex(i)
+        known_sorted = sorted(KNOWN_BOARDS)
+        present_sorted = sorted(present)
+        rest = [b for b in known_sorted if b not in present]
+    
+        m = QStandardItemModel(self.board_combo)
+        def _add_txt(txt: str, enabled: bool = True):
+            it = QStandardItem(txt)
+            if not enabled:
+                it.setFlags(Qt.NoItemFlags)
+            m.appendRow(it)
+    
+        _add_txt("All")
+        for b in present_sorted:
+            _add_txt(b)
+        # separator jen pokud jsou nějaké přítomné a zároveň existuje zbytek
+        if present_sorted and rest:
+            _add_txt("────────────", enabled=False)
+        for b in rest:
+            _add_txt(b)
+    
+        self.board_combo.setModel(m)
+    
+        # obnov výběr
+        # pokud předchozí neexistuje (separator), přepni na All
+        idx = None
+        for row in range(m.rowCount()):
+            if m.item(row).flags() & Qt.ItemIsEnabled:
+                if m.item(row).text() == prev:
+                    idx = row
                     break
-            else:
-                combo.setCurrentIndex(0)
-        finally:
-            combo.blockSignals(False)
+        if idx is None:
+            idx = 0
+        self.board_combo.setCurrentIndex(idx)
 
     def _enumerate_all_pdfs(self) -> list[str]:
         """
