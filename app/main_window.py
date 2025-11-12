@@ -2339,3 +2339,180 @@ class MainWindow(QMainWindow):
         self.lbl_proof.setText(rec.proof_of_istqb_certifications or "")
         self.lbl_links.setText(rec.university_links or "")
         self.lbl_additional.setText(rec.additional_information_documents or "")
+        
+        
+        
+        
+        
+        
+    def showEvent(self, event) -> None:
+        """
+        Apply global sizing once on the first show.
+        Minimal-change: no logic/data changes; only visual sizing hints.
+        """
+        try:
+            super(type(self), self).showEvent(event)
+        except Exception:
+            try:
+                super().showEvent(event)  # in case MRO differs
+            except Exception:
+                pass
+    
+        # Run only once
+        if getattr(self, "_sizing_applied", False):
+            return
+    
+        try:
+            self._apply_global_sizing_once()
+        finally:
+            self._sizing_applied = True
+            
+    def _apply_global_sizing_once(self) -> None:
+        """
+        Global sizing orchestrator:
+          - ensure recommended minimum main window size (if currently smaller),
+          - fit Overview table columns,
+          - fit Sorted PDFs tree / splitter.
+        """
+        from PySide6.QtCore import QTimer
+    
+        # 1) Main window recommended minimum (only upscale if needed)
+        rec_w, rec_h = 1280, 900
+        try:
+            if self.width() < rec_w or self.height() < rec_h:
+                self.resize(max(self.width(), rec_w), max(self.height(), rec_h))
+        except Exception:
+            pass
+    
+        # 2) Overview autosize
+        try:
+            self._apply_overview_sizes()
+        except Exception:
+            pass
+    
+        # 3) Sorted PDFs autosize
+        try:
+            self._apply_sorted_sizes()
+        except Exception:
+            pass
+    
+        # 4) Re-run once after event loop to catch late model updates
+        def _post():
+            try:
+                self._apply_overview_sizes()
+            except Exception:
+                pass
+            try:
+                self._apply_sorted_sizes()
+            except Exception:
+                pass
+        QTimer.singleShot(0, _post)
+        
+    def _apply_overview_sizes(self) -> None:
+        """
+        Fit Overview table to its data without changing behavior.
+        Assumes self.table is QTableView with a proxy model.
+        """
+        from PySide6.QtCore import QTimer
+        try:
+            view = self.table
+        except Exception:
+            return
+        if view is None:
+            return
+        try:
+            hh = view.horizontalHeader()
+            hh.setStretchLastSection(True)
+            # Try mild resize now…
+            view.resizeColumnsToContents()
+            # …and again after the event loop (in case model just updated)
+            QTimer.singleShot(0, view.resizeColumnsToContents)
+        except Exception:
+            pass
+        
+    def _apply_browser_sizes(self) -> None:
+        """
+        Fit v "PDF Browser": sloupce stromu dle obsahu, včetně re-fit po načtení adresářů.
+        Zachovává existující chování (_build_browser_tab už řeší Name/ResizeToContents).
+        Tady navíc:
+          - resize všech dostupných sloupců podle obsahu,
+          - jednorázové napojení na fs_model.directoryLoaded -> re-fit,
+          - žádná změna layoutu/detail panelu.
+        """
+        from PySide6.QtWidgets import QHeaderView
+        from PySide6.QtCore import QTimer
+    
+        tree = getattr(self, "tree", None)
+        fs_model = getattr(self, "fs_model", None)
+        if not tree or not fs_model:
+            return
+    
+        header = tree.header()
+        try:
+            cols = header.count()
+        except Exception:
+            cols = 1
+    
+        # Pro jistotu nastavíme ResizeToContents na všech sloupcích, které existují
+        for c in range(cols):
+            try:
+                # Qt6 API
+                header.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+            except Exception:
+                # Qt5 fallback
+                try:
+                    header.setResizeMode(c, QHeaderView.ResizeToContents)
+                except Exception:
+                    pass
+            try:
+                tree.resizeColumnToContents(c)
+            except Exception:
+                pass
+    
+        # Druhé kolo po event loopu
+        def _second_pass():
+            for c in range(cols):
+                try:
+                    tree.resizeColumnToContents(c)
+                except Exception:
+                    pass
+        QTimer.singleShot(0, _second_pass)
+    
+        # Napojení na directoryLoaded (jen jednou), aby se refitlo po načtení adresáře
+        if not getattr(self, "_browser_sizes_connected", False):
+            try:
+                def _on_loaded(*_):
+                    # malý odklad a re-fit, protože FS model finishuje později
+                    QTimer.singleShot(0, self._apply_browser_sizes)
+                fs_model.directoryLoaded.connect(_on_loaded)
+                self._browser_sizes_connected = True
+            except Exception:
+                pass
+        
+    def _apply_sorted_sizes(self) -> None:
+        """
+        Fit Sorted PDFs parts without altering logic.
+        - autosize tree column,
+        - gentle splitter ratio (≈48% : 52%),
+        - keep previously set compact PTE heights (if any).
+        """
+        from PySide6.QtCore import QTimer
+        try:
+            tree = self.tree_sorted
+            splitter = self.split_sorted
+        except Exception:
+            return
+    
+        if tree is not None:
+            try:
+                tree.resizeColumnToContents(0)
+                QTimer.singleShot(0, lambda: tree.resizeColumnToContents(0))
+            except Exception:
+                pass
+    
+        if splitter is not None:
+            try:
+                total_w = max(getattr(self, "width", lambda: 1200)(), 1200)
+                splitter.setSizes([int(total_w * 0.48), int(total_w * 0.52)])
+            except Exception:
+                pass
