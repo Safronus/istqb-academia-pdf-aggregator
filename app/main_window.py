@@ -777,7 +777,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QCheckBox, QLabel,
             QComboBox, QPushButton, QListWidget, QListWidgetItem, QScrollArea,
-            QWidget, QGridLayout, QDialogButtonBox, QFileDialog, QMessageBox
+            QWidget, QGridLayout, QDialogButtonBox, QFileDialog, QMessageBox, QRadioButton
         )
         from PySide6.QtCore import Qt
         from datetime import datetime
@@ -806,6 +806,41 @@ class MainWindow(QMainWindow):
             ("File name", "file_name"),
         ]
     
+        # --- pomocné: zjisti počet vybraných řádků + sadu vybraných názvů souborů z tabulky ---
+        selected_count = 0
+        selected_file_names: set[str] = set()
+        try:
+            view = getattr(self, "table", None)
+            model = view.model() if view else None
+            selm = view.selectionModel() if view else None
+    
+            # najdi index sloupce "File name" z self._headers (poslední řádek popisku po \n)
+            col_file = None
+            try:
+                for i, h in enumerate(getattr(self, "_headers", [])):
+                    lbl = h.split("\n")[-1].strip() if "\n" in h else h.strip()
+                    if lbl.lower() == "file name":
+                        col_file = i
+                        break
+                if col_file is None:
+                    # fallback: první sloupec obsahující "File"
+                    for i, h in enumerate(getattr(self, "_headers", [])):
+                        if "File" in h:
+                            col_file = i
+                            break
+            except Exception:
+                col_file = None
+    
+            if view and model and selm and col_file is not None:
+                for idx in selm.selectedRows(col_file):
+                    val = model.data(idx, Qt.DisplayRole)
+                    if val:
+                        selected_file_names.add(str(val))
+            selected_count = len(selected_file_names)
+        except Exception:
+            selected_count = 0
+            selected_file_names = set()
+    
         # --- dialog ---
         class ExportDialog(QDialog):
             def __init__(self, boards_avail: list[str], parent=None):
@@ -827,6 +862,20 @@ class MainWindow(QMainWindow):
                 fmt_lay.addWidget(self.chk_xlsx)
                 fmt_lay.addWidget(self.chk_txt)
                 main.addWidget(grp_fmt)
+    
+                # --- Scope (NOVÉ) ---
+                grp_scope = QGroupBox("Scope")
+                scope_lay = QVBoxLayout(grp_scope)
+                self.rb_selected = QRadioButton(f"Selected rows ({selected_count})")
+                self.rb_all = QRadioButton("All rows")
+                if selected_count > 0:
+                    self.rb_selected.setChecked(True)
+                else:
+                    self.rb_selected.setEnabled(False)
+                    self.rb_all.setChecked(True)
+                scope_lay.addWidget(self.rb_selected)
+                scope_lay.addWidget(self.rb_all)
+                main.addWidget(grp_scope)
     
                 # --- Boardy ---
                 grp_b = QGroupBox("Boards to export")
@@ -921,6 +970,9 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Export", "Select at least one format.")
                     return
     
+                # scope
+                scope = "selected" if self.rb_selected.isChecked() else "all"
+    
                 # boardy
                 boards = None
                 if not self.all_boards.isChecked():
@@ -939,8 +991,9 @@ class MainWindow(QMainWindow):
     
                 self.result = {
                     "formats": fmts,
-                    "boards": boards,  # None = All
-                    "fields": fields,  # list of (label, key)
+                    "boards": boards,   # None = All
+                    "fields": fields,   # list of (label, key)
+                    "scope": scope,     # "selected" | "all"
                 }
                 self.accept()
     
@@ -953,6 +1006,7 @@ class MainWindow(QMainWindow):
         formats: list[str] = dlg.result["formats"]
         boards_sel: list[str] | None = dlg.result["boards"]
         fields: list[tuple[str, str]] = dlg.result["fields"]
+        scope: str = dlg.result.get("scope", "all")
     
         # výběr cesty (jeden dialog – základní soubor, ostatní formáty vedle)
         # navržený název podle času a případných boardů
@@ -973,11 +1027,22 @@ class MainWindow(QMainWindow):
             # uživatel nedal příponu → použij base_name z dialogu
             base_no_ext = path
     
-        # vyber záznamy dle boards
+        # vyber záznamy dle boards + (NOVĚ) dle scope "selected"
         records = list(getattr(self, "records", []))
         if boards_sel is not None:
             wh = set(boards_sel)
             records = [r for r in records if (getattr(r, "board", None) in wh)]
+    
+        if scope == "selected" and selected_file_names:
+            # porovnáme podle názvu souboru (rec.path.name), jak je zobrazen v tabulce
+            names = set(selected_file_names)
+            def _match_selected(rec) -> bool:
+                try:
+                    p = getattr(rec, "path", None)
+                    return bool(p and p.name in names)
+                except Exception:
+                    return False
+            records = [r for r in records if _match_selected(r)]
     
         # připrav řádky (jen vybraná pole)
         # každý řádek → list hodnot podle (label, key) pořadí
@@ -995,6 +1060,10 @@ class MainWindow(QMainWindow):
     
         for rec in records:
             rows.append([_get_val(rec, key) for (_lab, key) in fields])
+    
+        if not rows:
+            QMessageBox.information(self, "Export", "No rows to export for the chosen scope/filters.")
+            return
     
         # exporty
         ok, errs = [], []
