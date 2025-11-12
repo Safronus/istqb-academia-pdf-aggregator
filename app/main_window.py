@@ -361,7 +361,18 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # Export button (ponechán z 0.4, pokud existuje)
+        # === NOVÉ: tlačítko "Unparsed" (ad-hoc audit; žádná změna scanneru) ===
+        self.btn_unparsed = QToolButton(self)
+        self.btn_unparsed.setText("Unparsed")
+        self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
+        self.btn_unparsed.setIcon(self.style().standardIcon(QStyle.SP_MessageBoxWarning))
+        self.btn_unparsed.setAutoRaise(True)
+        # jemné vizuální zvýraznění (dark theme safe)
+        self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
+        self.btn_unparsed.clicked.connect(self.show_unparsed_report)
+        controls.addWidget(self.btn_unparsed)
+    
+        # Export button (zůstává z 0.5a)
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
@@ -396,24 +407,22 @@ class MainWindow(QMainWindow):
     
         layout.addLayout(controls)
     
-        # Tabulka Overview
+        # Tabulka Overview (beze změny)
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectRows)
-        # >>> ZMĚNA: multiselect
-        self.table.setSelectionMode(QTableView.ExtendedSelection)
+        self.table.setSelectionMode(QTableView.ExtendedSelection)  # multiselect
         self.table.doubleClicked.connect(self.open_selected_pdf)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # Kontextové menu – doplnění akce Export to Sorted
+        # Kontextové menu – export do Sorted (zůstává)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
     
         def _ctx(pos):
             idx = self.table.indexAt(pos)
             if idx.isValid():
-                # zajistit označení řádku pod kurzorem (nezruší multiselect)
                 if not self.table.selectionModel().isSelected(idx):
                     self.table.selectRow(idx.row())
             menu = QMenu(self.table)
@@ -422,14 +431,117 @@ class MainWindow(QMainWindow):
             if chosen == act_export_sorted:
                 self.export_selected_to_sorted()
     
-        try:
-            self.table.customContextMenuRequested.disconnect()
-        except Exception:
-            pass
-        self.table.customContextMenuRequested.connect(_ctx)
+        if not getattr(self, "_overview_ctx_connected", False):
+            self.table.customContextMenuRequested.connect(_ctx)
+            self._overview_ctx_connected = True
     
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
+
+    def _enumerate_all_pdfs(self) -> list[str]:
+        """
+        Vrátí list absolutních cest na *.pdf pod self.pdf_root (rekurzivně),
+        s ignorováním jakékoli složky '__archive__'.
+        """
+        from pathlib import Path
+        root = getattr(self, "pdf_root", None)
+        if not root:
+            return []
+        root = Path(root).resolve()
+        out: list[str] = []
+        try:
+            for p in root.rglob("*.pdf"):
+                try:
+                    rel = p.resolve().relative_to(root)
+                    if "__archive__" in rel.parts:
+                        continue
+                    out.append(str(p.resolve()))
+                except Exception:
+                    # pokud by nešla relativní cesta, stále přidáme (bez filtru)
+                    out.append(str(p.resolve()))
+        except Exception:
+            pass
+        return out
+
+    def show_unparsed_report(self) -> None:
+        """
+        Ad-hoc audit: porovná PDF v self.pdf_root (rekurzivně; ignoruje '__archive__')
+        s aktuálně zobrazenými záznamy (self.records).
+        Zobrazí dialog s přehledem "unparsed" PDF (Board, File name, Full path).
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+            QTreeWidget, QTreeWidgetItem, QPushButton
+        )
+        from PySide6.QtCore import Qt
+        from pathlib import Path
+    
+        # 1) PDF na disku (mimo __archive__)
+        all_pdfs = self._enumerate_all_pdfs()
+    
+        # 2) PDF v Overview (už naparsovaná) – vezmeme absolutní cesty
+        parsed_paths = set()
+        try:
+            for r in getattr(self, "records", []):
+                p = getattr(r, "path", None)
+                if p:
+                    parsed_paths.add(str(Path(p).resolve()))
+        except Exception:
+            pass
+    
+        # 3) Rozdíl = unparsed
+        unparsed = []
+        for p in all_pdfs:
+            ap = str(Path(p).resolve())
+            if ap not in parsed_paths:
+                # board = první složka pod pdf_root (pokud existuje)
+                try:
+                    rel = Path(p).resolve().relative_to(self.pdf_root.resolve())
+                    board = rel.parts[0] if len(rel.parts) > 1 else ""
+                except Exception:
+                    board = ""
+                unparsed.append((board, Path(p).name, ap))
+    
+        # 4) Dialog s výsledky
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Unparsed PDFs")
+        dlg.resize(800, 500)
+    
+        lay = QVBoxLayout(dlg)
+        header = QLabel(f"PDFs on disk not present in Overview: {len(unparsed)}")
+        header.setStyleSheet("QLabel { color: #ff6b6b; font-weight: 600; }")
+        lay.addWidget(header)
+    
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["Board", "File name", "Full path"])
+        tree.header().setDefaultAlignment(Qt.AlignCenter)
+        tree.header().setStretchLastSection(True)
+        for board, fname, fullp in sorted(unparsed, key=lambda t: (t[0].lower(), t[1].lower())):
+            it = QTreeWidgetItem([board or "—", fname, fullp])
+            tree.addTopLevelItem(it)
+        tree.expandAll()
+        lay.addWidget(tree, 1)
+    
+        # Tlačítka
+        btns = QHBoxLayout()
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(dlg.accept)
+        btns.addStretch(1)
+        btns.addWidget(btn_close)
+        lay.addLayout(btns)
+    
+        # 5) Aktualizuj badge na tlačítku
+        try:
+            if len(unparsed) > 0:
+                self.btn_unparsed.setText(f"Unparsed: {len(unparsed)}")
+                self.statusBar().showMessage(f"Unparsed PDFs: {len(unparsed)}")
+            else:
+                self.btn_unparsed.setText("Unparsed")
+                self.statusBar().showMessage("All PDFs present in Overview.")
+        except Exception:
+            pass
+    
+        dlg.exec()
 
     def _collect_available_boards(self) -> list[str]:
         """
