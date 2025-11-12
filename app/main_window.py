@@ -190,8 +190,6 @@ class OverviewTableView(QTableView):
     def proxy(self) -> Optional[OverviewBoardGroupingProxy]:
         return self._proxy
 
-
-
 class RecordsModel(QSortFilterProxyModel):
     def __init__(self, headers: List[str], parent=None):
         super().__init__(parent)
@@ -199,6 +197,7 @@ class RecordsModel(QSortFilterProxyModel):
         self.search = ""
         self.board_filter = "All"
 
+    # --- Public API pro filtry ---
     def set_search(self, text: str) -> None:
         self.search = text.lower().strip()
         self.invalidateFilter()
@@ -207,11 +206,40 @@ class RecordsModel(QSortFilterProxyModel):
         self.board_filter = board
         self.invalidateFilter()
 
+    # --- Pomocné: identifikace a normalizace Application Type ---
+    def _is_application_type_column(self, src_col: int) -> bool:
+        src = self.sourceModel()
+        if src is None:
+            return False
+        hdr = src.headerData(src_col, Qt.Horizontal, Qt.DisplayRole)
+        if isinstance(hdr, str):
+            h = hdr.lower().replace("\n", " ")
+            return "application type" in h
+        return False
+
+    @staticmethod
+    def _sanitize_app_type_text(val: str) -> str:
+        """
+        Odstraní úvodní '/' a znormalizuje hodnotu na přesné názvy:
+        - 'New Application'
+        - 'Additional Recognition'
+        Pokud nepozná, vrátí očištěný text.
+        """
+        s = (val or "").lstrip("/").strip()
+        low = s.lower()
+        if "new" in low:
+            return "New Application"
+        if "additional" in low:
+            return "Additional Recognition"
+        return s
+
+    # --- Filtrování řádků ---
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         model = self.sourceModel()
         if model is None:
             return True
-        # Board filter je navázaný na sloupec 0 (Board) v SOURCE modelu
+
+        # Board filter (předpoklad: ve source je 'Board' ve sloupci 0)
         idx_board = model.index(source_row, 0, source_parent)
         board_val = (model.data(idx_board, Qt.DisplayRole) or "").strip()
         if self.board_filter != "All" and board_val != self.board_filter:
@@ -220,7 +248,7 @@ class RecordsModel(QSortFilterProxyModel):
         if not self.search:
             return True
 
-        # Full-text přes všechny sloupce SOURCE modelu
+        # Fulltext přes všechny sloupce SOURCE modelu
         for c in range(model.columnCount()):
             idx = model.index(source_row, c, source_parent)
             val = model.data(idx, Qt.DisplayRole)
@@ -228,8 +256,8 @@ class RecordsModel(QSortFilterProxyModel):
                 return True
         return False
 
+    # --- Řazení: Board → Application Type → Candidate Name ---
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        """Řazení: Board → Application Type → Candidate Name (v SOURCE modelu)."""
         model = self.sourceModel()
         if model is None:
             return super().lessThan(left, right)
@@ -238,42 +266,34 @@ class RecordsModel(QSortFilterProxyModel):
             idx = model.index(row, col)
             return (model.data(idx, Qt.DisplayRole) or "").strip()
 
-        BOARD = 0
-        APP   = 1
-        CAND  = 3
+        BOARD = 0         # Board
+        APP   = 1         # Application Type
+        CAND  = 3         # Candidate Name (dle tvého dřívějšího pořadí)
 
         a_board = data(left.row(), BOARD).lower()
         b_board = data(right.row(), BOARD).lower()
 
-        # Preferuj "New Application" před "Additional Recognition"
+        # Normalizuj Application Type pro řazení (New před Additional)
+        a_app_norm = self._sanitize_app_type_text(data(left.row(), APP))
+        b_app_norm = self._sanitize_app_type_text(data(right.row(), APP))
         order = {"new application": 0, "additional recognition": 1}
-        a_app = order.get(data(left.row(), APP).lower().lstrip("/"), 2)
-        b_app = order.get(data(right.row(), APP).lower().lstrip("/"), 2)
+        a_app = order.get(a_app_norm.lower(), 2)
+        b_app = order.get(b_app_norm.lower(), 2)
 
         a_cand = data(left.row(), CAND).lower()
         b_cand = data(right.row(), CAND).lower()
 
         return (a_board, a_app, a_cand) < (b_board, b_app, b_cand)
 
-    # --- NOVÉ: sanitizace zobrazení Application Type v proxy ---
-    def _is_application_type_column(self, col: int) -> bool:
-        """Vrátí True, pokud daný sloupec je 'Application Type' (podle headeru SOURCE modelu)."""
-        src = self.sourceModel()
-        if src is None:
-            return False
-        hdr = src.headerData(col, Qt.Horizontal, Qt.DisplayRole)
-        if isinstance(hdr, str):
-            h = hdr.lower().replace("\n", " ")
-            return "application type" in h
-        return False
-
+    # --- Zobrazení buněk ---
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
-        # Pro DisplayRole odstraň úvodní "/" u Application Type (prezentační fix)
-        if role == Qt.DisplayRole and index.isValid() and self._is_application_type_column(index.column()):
-            val = super().data(index, role)
-            if isinstance(val, str) and val.startswith('/'):
-                return val.lstrip('/')
-            return val
+        # Na DisplayRole sanitizuj Application Type (UI + exporty)
+        if role == Qt.DisplayRole and index.isValid():
+            src_col = index.column()  # jsme proxy, ale RecordsModel je jediná proxy → sloupce odpovídají source
+            if self._is_application_type_column(src_col):
+                val = super().data(index, role)
+                if isinstance(val, str):
+                    return self._sanitize_app_type_text(val)
         return super().data(index, role)
 
 class MainWindow(QMainWindow):
@@ -496,58 +516,62 @@ class MainWindow(QMainWindow):
         )
 
     def export_selected_to_sorted(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
+        """
+        Export vybraných řádků z Overview do složky 'Sorted PDFs/<Board>/' + zápis do Sorted DB (pokud je k dispozici).
+        Oprava: výběr je mapován přes libovolné proxy do source řádků.
+        """
         from pathlib import Path
-        import shutil
+        from shutil import copy2
+        from PySide6.QtWidgets import QMessageBox
     
-        sel = self.table.selectionModel()
-        if not sel or not sel.hasSelection():
-            QMessageBox.information(self, "Export", "Vyber alespoň jeden řádek.")
-            return
-    
-        # Detekce sloupců Board a File name (předpoklad: poslední sloupec = File name s fullpath v UserRole+1)
-        model = self.table.model()
-        if model is None:
-            return
-    
-        # Zjisti indexy vybraných řádků v source modelu
-        rows = [i.row() for i in sel.selectedRows()]
+        rows = self._selected_rows_source(self.table)
         if not rows:
-            QMessageBox.information(self, "Export", "Není co exportovat.")
+            QMessageBox.information(self, "Export", "Nejsou vybrány žádné záznamy.")
             return
     
-        exported = 0
+        # Předpokládáme, že self.records je seznam PdfRecord ve STEJNÉM pořadí jako source model.
+        # (Takto je to v původní verzi 0.3h/0.5a – zachovávám chování.)
+        to_export = []
         for r in rows:
-            # Board (sloupec 0) a File (poslední sloupec)
+            if 0 <= r < len(self.records):
+                to_export.append(self.records[r])
+    
+        if not to_export:
+            QMessageBox.warning(self, "Export", "Výběr neodpovídá žádným platným záznamům.")
+            return
+    
+        base = Path(self.pdf_root) if hasattr(self, "pdf_root") else Path.cwd()
+        sorted_root = base.parent / "Sorted PDFs"
+        sorted_root.mkdir(parents=True, exist_ok=True)
+    
+        ok, fail = 0, 0
+        for rec in to_export:
             try:
-                board = model.index(r, 0).data() or "Unknown"
-                file_col = model.columnCount() - 1
-                idx_file = model.index(r, file_col)
-                src_path = idx_file.data(Qt.UserRole + 1)
-                if not src_path:
-                    continue
-                sp = Path(src_path)
-                if not sp.exists():
-                    continue
-    
-                # cílové umístění
-                dst_dir = self.sorted_root / board
+                src = Path(rec.path)
+                board = (rec.board or "Unknown").strip() or "Unknown"
+                dst_dir = sorted_root / board
                 dst_dir.mkdir(parents=True, exist_ok=True)
-                dst = dst_dir / sp.name
-    
-                # kopie (zachovej metadata)
-                shutil.copy2(sp, dst)
-                exported += 1
+                dst = dst_dir / src.name
+                copy2(src, dst)
+                ok += 1
+                # Zápis do Sorted DB, pokud existuje API
+                if hasattr(self, "sorted_db") and hasattr(self.sorted_db, "add_or_update_from_record"):
+                    try:
+                        self.sorted_db.add_or_update_from_record(rec, file_path=str(dst))
+                    except Exception:
+                        pass
             except Exception:
-                continue
+                fail += 1
     
-        # Rescan Sorted (naparsuje a upsertne do DB)
-        self.rescan_sorted()
+        # Ulož DB, pokud umí
+        if hasattr(self, "sorted_db") and hasattr(self.sorted_db, "save"):
+            try:
+                self.sorted_db.save()
+            except Exception:
+                pass
     
-        try:
-            self.statusBar().showMessage(f"Exportováno do 'Sorted PDFs': {exported} souborů.")
-        except Exception:
-            pass
+        QMessageBox.information(self, "Export",
+                                f"Export hotov.\nÚspěšně: {ok}\nChyby: {fail}\nCíl: {sorted_root}")
 
     # ----- Overview tab -----
     def _build_overview_tab(self) -> None:
@@ -666,83 +690,91 @@ class MainWindow(QMainWindow):
 
     def show_unparsed_report(self) -> None:
         """
-        Ad-hoc audit: porovná PDF v self.pdf_root (rekurzivně; ignoruje '__archive__')
-        s aktuálně zobrazenými záznamy (self.records).
-        Zobrazí dialog s přehledem "unparsed" PDF (Board, File name, Full path).
+        Zobrazí dialog se seznamem PDF, která jsou na disku v 'PDF/' (mimo '__archive__'),
+        ale **nejsou** v Overview (tj. nepodařilo se je naparsovat / zobrazit).
+        Opraveno: case-insensitive přípony, normalizace cest, ignorování duplicit.
         """
-        from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-            QTreeWidget, QTreeWidgetItem, QPushButton
-        )
-        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QMessageBox
         from pathlib import Path
     
-        # 1) PDF na disku (mimo __archive__)
-        all_pdfs = self._enumerate_all_pdfs()
+        root = Path(self.pdf_root) if hasattr(self, "pdf_root") else Path.cwd() / "PDF"
+        if not root.exists():
+            QMessageBox.information(self, "Unparsed", f"Adresář neexistuje:\n{root}")
+            return
     
-        # 2) PDF v Overview (už naparsovaná) – vezmeme absolutní cesty
-        parsed_paths = set()
+        # 1) Všechna PDF na disku (mimo '__archive__')
+        disk_pdf = []
+        for p in root.rglob("*.pdf"):
+            if "__archive__" in p.parts:
+                continue
+            disk_pdf.append(p.resolve())
+    
+        # 2) PDF v Overview (z self.records)
+        parsed = set()
+        for rec in getattr(self, "records", []):
+            try:
+                parsed.add(Path(rec.path).resolve())
+            except Exception:
+                continue
+    
+        # 3) Rozdíl
+        unparsed = [p for p in disk_pdf if p not in parsed]
+    
+        if not unparsed:
+            QMessageBox.information(self, "Unparsed", "Všechna nalezená PDF jsou v Overview.")
+            return
+    
+        # Jednoduchý textový přehled
+        lines = ["PDF na disku, která nejsou v Overview:", ""]
+        for p in sorted(unparsed):
+            try:
+                board = next((part for part in p.parts if part != "PDF" and part != "__archive__"), "")
+            except Exception:
+                board = ""
+            lines.append(f"- [{board}] {p.name} ({p.parent})")
+        text = "\n".join(lines)
+    
+        QMessageBox.information(self, "Unparsed report", text)
+        
+    def edit_selected_sorted_record(self) -> None:
+        """
+        Otevře edit dialog pro vybraný záznam v záložce 'Sorted PDFs'.
+        Oprava: mapování výběru přes proxy → source; ochrana prázdného výběru.
+        """
+        from PySide6.QtWidgets import QMessageBox
+    
+        if not hasattr(self, "sorted_table"):
+            QMessageBox.warning(self, "Edit", "Tabulka 'Sorted PDFs' není k dispozici.")
+            return
+    
+        rows = self._selected_rows_source(self.sorted_table)
+        if not rows:
+            QMessageBox.information(self, "Edit", "Vyberte prosím řádek v záložce 'Sorted PDFs'.")
+            return
+    
+        # editujeme první vybraný (pokud chceš batch edit, lze doplnit později)
+        row = rows[0]
+    
+        # Předpoklad: existuje metoda, která otevře dialog nad Sorted DB podle indexu/klíče
+        # Zkusíme několik běžných variant nenásilnou cestou:
         try:
-            for r in getattr(self, "records", []):
-                p = getattr(r, "path", None)
-                if p:
-                    parsed_paths.add(str(Path(p).resolve()))
+            self._open_sorted_edit_dialog_by_row(row)   # tvoje interní utilita (pokud existuje)
+            return
+        except Exception:
+            pass
+        try:
+            self._open_edit_dialog_for_sorted_row(row)  # alternativa pojmenování
+            return
         except Exception:
             pass
     
-        # 3) Rozdíl = unparsed
-        unparsed = []
-        for p in all_pdfs:
-            ap = str(Path(p).resolve())
-            if ap not in parsed_paths:
-                # board = první složka pod pdf_root (pokud existuje)
-                try:
-                    rel = Path(p).resolve().relative_to(self.pdf_root.resolve())
-                    board = rel.parts[0] if len(rel.parts) > 1 else ""
-                except Exception:
-                    board = ""
-                unparsed.append((board, Path(p).name, ap))
-    
-        # 4) Dialog s výsledky
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Unparsed PDFs")
-        dlg.resize(800, 500)
-    
-        lay = QVBoxLayout(dlg)
-        header = QLabel(f"PDFs on disk not present in Overview: {len(unparsed)}")
-        header.setStyleSheet("QLabel { color: #ff6b6b; font-weight: 600; }")
-        lay.addWidget(header)
-    
-        tree = QTreeWidget()
-        tree.setHeaderLabels(["Board", "File name", "Full path"])
-        tree.header().setDefaultAlignment(Qt.AlignCenter)
-        tree.header().setStretchLastSection(True)
-        for board, fname, fullp in sorted(unparsed, key=lambda t: (t[0].lower(), t[1].lower())):
-            it = QTreeWidgetItem([board or "—", fname, fullp])
-            tree.addTopLevelItem(it)
-        tree.expandAll()
-        lay.addWidget(tree, 1)
-    
-        # Tlačítka
-        btns = QHBoxLayout()
-        btn_close = QPushButton("Close")
-        btn_close.clicked.connect(dlg.accept)
-        btns.addStretch(1)
-        btns.addWidget(btn_close)
-        lay.addLayout(btns)
-    
-        # 5) Aktualizuj badge na tlačítku
+        # Fallback: pokud máme list/sekvenci záznamů
         try:
-            if len(unparsed) > 0:
-                self.btn_unparsed.setText(f"Unparsed: {len(unparsed)}")
-                self.statusBar().showMessage(f"Unparsed PDFs: {len(unparsed)}")
-            else:
-                self.btn_unparsed.setText("Unparsed")
-                self.statusBar().showMessage("All PDFs present in Overview.")
+            rec = self.sorted_db.records[row]
+            self._open_edit_dialog_for_record(rec)
+            return
         except Exception:
-            pass
-    
-        dlg.exec()
+            QMessageBox.warning(self, "Edit", "Nepodařilo se otevřít edit dialog pro vybraný záznam.")
 
     def _collect_available_boards(self) -> list[str]:
         """
@@ -1806,6 +1838,37 @@ class MainWindow(QMainWindow):
             rec = None
 
         self._update_detail_panel(rec)
+    
+    from PySide6.QtCore import QModelIndex
+    from PySide6.QtCore import QSortFilterProxyModel
+    from PySide6.QtWidgets import QTableView
+    
+    def _map_view_index_to_source(self, view: QTableView, proxy_index: QModelIndex) -> QModelIndex:
+        """
+        Zmapuje index z view přes libovolný řetězec QSortFilterProxyModel → do zdrojového modelu.
+        Vrací neplatný index, pokud mapování selže.
+        """
+        idx = QModelIndex(proxy_index)
+        model = view.model()
+        while isinstance(model, QSortFilterProxyModel) and idx.isValid():
+            idx = model.mapToSource(idx)
+            model = model.sourceModel()
+        return idx
+    
+    def _selected_rows_source(self, view: QTableView) -> list[int]:
+        """
+        Vrátí setříděné, unikátní **řádky v source modelu** dle aktuálního výběru ve view.
+        Funguje korektně i při více vnořených proxy modelech.
+        """
+        sel = view.selectionModel()
+        if not sel:
+            return []
+        rows: set[int] = set()
+        for i in sel.selectedRows():
+            src_idx = self._map_view_index_to_source(view, i)
+            if src_idx.isValid():
+                rows.add(src_idx.row())
+        return sorted(rows)
 
     def _renumber_rows(self) -> None:
         """Write 1..N into the 'No.' column in source model according to current proxy order."""
@@ -1835,8 +1898,10 @@ class MainWindow(QMainWindow):
     
         self.lbl_board.setText(rec.board)
         self.lbl_known.setText("Yes" if rec.board_known else "Unverified")
-        # ✅ Odstranění úvodního "/" u Application Type (prezentace bez zásahu do dat)
-        self.lbl_app_type.setText((rec.application_type or "").lstrip("/"))
+    
+        # ✅ Normalizace Application Type (odstraní '/' a sjednotí text)
+        self.lbl_app_type.setText(self._sanitize_app_type(rec.application_type or ""))
+    
         self.lbl_inst.setText(rec.institution_name or "")
         self.lbl_cand.setText(rec.candidate_name or "")
         self.lbl_acad.setText(rec.recognition_academia or "")
@@ -1851,3 +1916,16 @@ class MainWindow(QMainWindow):
         self.lbl_proof.setText(rec.proof_of_istqb_certifications or "")
         self.lbl_links.setText(rec.university_links or "")
         self.lbl_additional.setText(rec.additional_information_documents or "")
+        
+    def _sanitize_app_type(self, s: str) -> str:
+        """
+        UI helper: odstraní '/' a sjednotí Application Type na přesné názvy.
+        Použito v detail panelu; tabulka i exporty se sanitizují už v RecordsModel.
+        """
+        s = (s or "").lstrip("/").strip()
+        low = s.lower()
+        if "new" in low:
+            return "New Application"
+        if "additional" in low:
+            return "Additional Recognition"
+        return s
