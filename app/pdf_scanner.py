@@ -97,6 +97,9 @@ class PdfScanner:
         # Application type (radio)
         app_type = fval("application type") or ""
         app_type = app_type.strip()
+        
+        if app_type.startswith('/'):
+            app_type = app_type[1:].lstrip()  # v0.6c: remove leading slash from PDF Name
 
         # Institution & candidate (sekce 2)
         institution = fval("name of university", "high", "technical school") or ""
