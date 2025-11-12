@@ -1,17 +1,12 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.8 — 2025-11-12
-### Overview — Board filter with two sections
-- **Board combobox** now shows two sections:
-  1) Boards **present in the current table** (after filters/search)
-  2) ——— separator ———
-  3) Remaining boards from `KNOWN_BOARDS` (alphabetical)
-- Keeps **'All'** as the first item.
-- The list **updates automatically** when Overview data changes (rows inserted/removed/reset or data changed).
+## Version 0.8c — 2025-11-12
+### PDF Browser
+- **Details panel:** hide fields **"Known Board"** and **"Sorted Status"** (labels remain instantiated for compatibility, only not shown in the form).
 
 ### Notes
-- No changes to existing filtering logic; `_filter_board` works as before.
-- Minimal-change: only combobox population and signal wiring.
+- Minimal-change: no logic altered, no signal/slot changes.
+- Other tabs (Overview, Sorted PDFs) unaffected.
 
 ### macOS quick start
 ```bash
@@ -22,7 +17,6 @@ python -m app
 ```
 
 ### Recent
-- 0.8 — Overview: Board combobox grouped into present boards + separator + remaining boards.
-- 0.7j — enlarge window and Sorted sizing.
-- 0.7i — global sizing via showEvent; browser auto-fit.
-- 0.7f — TXT report formatting.
+- 0.8c — PDF Browser: hide "Known Board" and "Sorted Status" in details panel.
+- 0.8b — Overview export: scope option (Selected rows vs All rows).
+- 0.8 — Overview Board combobox grouped (present + separator + remaining).

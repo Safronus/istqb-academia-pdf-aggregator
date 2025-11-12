@@ -1971,6 +1971,8 @@ class MainWindow(QMainWindow):
         """
         PDF Browser: reflow layout to vertical split (TOP: file tree, BOTTOM: details).
         One-shot resize of main window to comfortably fit Name column + details.
+        (Minimal-change: 'Known Board' a 'Sorted Status' labels jsou vytvořeny,
+        ale nejsou přidány do formuláře -> v detailu se nezobrazují.)
         """
         from PySide6.QtCore import Qt, QTimer
         from PySide6.QtWidgets import (
@@ -2033,7 +2035,7 @@ class MainWindow(QMainWindow):
     
         # Vytvoření labelů přesně podle toho, co očekává _update_detail_panel(...)
         self.lbl_board = getattr(self, "lbl_board", _mklabel())
-        self.lbl_known = getattr(self, "lbl_known", _mklabel())
+        self.lbl_known = getattr(self, "lbl_known", _mklabel())                # <- existuje, ale nebude přidán
         self.lbl_app_type = getattr(self, "lbl_app_type", _mklabel())
         self.lbl_inst = getattr(self, "lbl_inst", _mklabel())
         self.lbl_cand = getattr(self, "lbl_cand", _mklabel())
@@ -2049,11 +2051,11 @@ class MainWindow(QMainWindow):
         self.lbl_proof = getattr(self, "lbl_proof", _mklabel())
         self.lbl_links = getattr(self, "lbl_links", _mklabel())
         self.lbl_additional = getattr(self, "lbl_additional", _mklabel())
-        self.lbl_sorted_status = getattr(self, "lbl_sorted_status", _mklabel())
+        self.lbl_sorted_status = getattr(self, "lbl_sorted_status", _mklabel())  # <- existuje, ale nebude přidán
     
-        # Sestavení formuláře (pořadí zachováno)
+        # Sestavení formuláře (pořadí zachováno, vynechány pouze dvě řádky)
         self.detail_form.addRow("Board:", self.lbl_board)
-        self.detail_form.addRow("Known Board:", self.lbl_known)
+        # self.detail_form.addRow("Known Board:", self.lbl_known)        # SKRYTO
         self.detail_form.addRow("Application Type:", self.lbl_app_type)
         self.detail_form.addRow("Institution Name:", self.lbl_inst)
         self.detail_form.addRow("Candidate Name:", self.lbl_cand)
@@ -2069,7 +2071,7 @@ class MainWindow(QMainWindow):
         self.detail_form.addRow("Proof of ISTQB Certifications:", self.lbl_proof)
         self.detail_form.addRow("University Links:", self.lbl_links)
         self.detail_form.addRow("Additional Info/Documents:", self.lbl_additional)
-        self.detail_form.addRow("Sorted Status:", self.lbl_sorted_status)
+        # self.detail_form.addRow("Sorted Status:", self.lbl_sorted_status)  # SKRYTO
     
         scroll.setWidget(form_host)
         bottom_layout.addWidget(scroll)
