@@ -42,3 +42,4 @@ Thumbs.db
 # Ignore runtime outputs (Sorted PDFs)
 /Sorted PDFs/
 /**/Sorted PDFs/
+contacts.json

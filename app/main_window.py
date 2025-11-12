@@ -165,15 +165,18 @@ class MainWindow(QMainWindow):
         self.overview_tab = QWidget()
         self.browser_tab = QWidget()
         self.sorted_tab = QWidget()
+        self.contacts_tab = QWidget()
     
         self.tabs.addTab(self.overview_tab, "Overview")
         self.tabs.addTab(self.browser_tab, "PDF Browser")
         self.tabs.addTab(self.sorted_tab, "Sorted PDFs")
+        self.tabs.addTab(self.contacts_tab, "Board Contacts")
     
         self._build_menu()
         self._build_overview_tab()
         self._build_browser_tab()
         self._build_sorted_tab()
+        self._build_contacts_tab()
     
         self.rescan()
         self.rescan_sorted()
@@ -1295,6 +1298,254 @@ class MainWindow(QMainWindow):
         proxy = self.table.model()
         if isinstance(proxy, RecordsModel):
             proxy.set_search(txt)
+
+    def _build_contacts_tab(self) -> None:
+        """
+        Contacts tab: Board -> (Full Name, Email)
+        - používá QStandardItemModel (3 sloupce: Board, Full Name, Email)
+        - Board je needitovatelný; ostatní dva sloupce editovatelné
+        - JSON perzistence (contacts.json), import CSV
+        - automatický fit sloupců
+        """
+        from PySide6.QtWidgets import (
+            QVBoxLayout, QHBoxLayout, QWidget, QTableView, QPushButton, QMessageBox
+        )
+        from PySide6.QtGui import QStandardItemModel, QStandardItem
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtWidgets import QHeaderView
+    
+        layout = QVBoxLayout(self.contacts_tab)
+    
+        # Ovládací řádek
+        bar = QHBoxLayout()
+        self.btn_contacts_import = QPushButton("Import CSV…")
+        self.btn_contacts_save = QPushButton("Save")
+        self.btn_contacts_reload = QPushButton("Reload")
+        bar.addWidget(self.btn_contacts_import)
+        bar.addStretch(1)
+        bar.addWidget(self.btn_contacts_reload)
+        bar.addWidget(self.btn_contacts_save)
+        layout.addLayout(bar)
+    
+        # Tabulka
+        self.tbl_contacts = QTableView(self.contacts_tab)
+        self.tbl_contacts.setSelectionBehavior(QTableView.SelectRows)
+        self.tbl_contacts.setSelectionMode(QTableView.ExtendedSelection)
+        self.tbl_contacts.setSortingEnabled(True)
+    
+        # Model
+        self._contacts_headers = ["Board", "Full Name", "Email"]
+        self._contacts_model = QStandardItemModel(0, len(self._contacts_headers), self)
+        self._contacts_model.setHorizontalHeaderLabels(self._contacts_headers)
+        self.tbl_contacts.setModel(self._contacts_model)
+    
+        # Fitting sloupců
+        hdr = self.tbl_contacts.horizontalHeader()
+        hdr.setStretchLastSection(True)
+        try:
+            hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        except Exception:
+            hdr.setResizeMode(0, QHeaderView.ResizeToContents)
+            hdr.setResizeMode(1, QHeaderView.ResizeToContents)
+            hdr.setResizeMode(2, QHeaderView.ResizeToContents)
+    
+        layout.addWidget(self.tbl_contacts, 1)
+    
+        # Data -> model
+        self._contacts_rebuild_model()
+    
+        # Akce
+        self.btn_contacts_save.clicked.connect(lambda: self._save_contacts_json(self._contacts_collect_data()))
+        self.btn_contacts_reload.clicked.connect(self._contacts_rebuild_model)
+        self.btn_contacts_import.clicked.connect(self._contacts_import_csv)
+    
+        # Finální doladění velikostí po vykreslení
+        def _refit():
+            try:
+                for c in range(self._contacts_model.columnCount()):
+                    self.tbl_contacts.resizeColumnToContents(c)
+            except Exception:
+                pass
+        QTimer.singleShot(0, _refit)
+        
+    def _contacts_json_path(self):
+        """
+        Umístění JSONu s kontakty v kořeni repozitáře (vedle zdrojáků).
+        Vhodné pro .gitignore.
+        """
+        from pathlib import Path
+        # repo_root ≈ dva levely nad tímto souborem: app/main_window.py -> repo/
+        repo_root = Path(__file__).resolve().parents[2]
+        return repo_root / "contacts.json"
+    
+    def _load_contacts_json(self) -> dict:
+        """
+        Načti JSON kontaktů: { "<BOARD>": { "full_name": str, "email": str }, ... }
+        Neexistuje-li soubor, vrať {}.
+        """
+        import json
+        p = self._contacts_json_path()
+        try:
+            if p.exists():
+                with p.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                    if isinstance(data, dict):
+                        return data
+        except Exception:
+            pass
+        return {}
+    
+    def _save_contacts_json(self, data: dict) -> None:
+        """
+        Ulož JSON kontaktů. Vytvoří/aktualizuje contacts.json.
+        """
+        import json
+        from pathlib import Path
+        p = self._contacts_json_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            try:
+                self.statusBar().showMessage("Contacts saved.")
+            except Exception:
+                pass
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Save contacts", f"Failed to save contacts.json:\n{e}")
+            
+    def _contacts_rebuild_model(self) -> None:
+        """
+        Naplní model kontakty pro všechny KNOWN_BOARDS.
+        Výchozí hodnoty prázdné, pokud nejsou v JSON.
+        """
+        from PySide6.QtGui import QStandardItem
+        from PySide6.QtCore import Qt
+    
+        data = self._load_contacts_json()  # dict
+        self._contacts_model.setRowCount(0)
+    
+        # Vždy zobraz všechny boardy; jméno/email mohou být prázdné
+        boards = sorted(KNOWN_BOARDS)
+        for b in boards:
+            full = ""
+            mail = ""
+            try:
+                rec = data.get(b, {})
+                full = rec.get("full_name", "") or ""
+                mail = rec.get("email", "") or ""
+            except Exception:
+                pass
+    
+            it_board = QStandardItem(b)
+            it_board.setEditable(False)
+            it_board.setData(b, Qt.DisplayRole)
+    
+            it_full = QStandardItem(full)
+            it_full.setEditable(True)
+    
+            it_mail = QStandardItem(mail)
+            it_mail.setEditable(True)
+    
+            self._contacts_model.appendRow([it_board, it_full, it_mail])
+    
+        # sloupce přizpůsob po naplnění
+        try:
+            view = self.tbl_contacts
+            for c in range(self._contacts_model.columnCount()):
+                view.resizeColumnToContents(c)
+        except Exception:
+            pass
+        
+    def _contacts_collect_data(self) -> dict:
+        """
+        Čti aktuální hodnoty z modelu a vytvoř JSON strukturu:
+        { "BOARD": {"full_name": "...", "email": "..."}, ... }
+        Prázdné dvojice ukládám také (výslovně prázdné).
+        """
+        from PySide6.QtCore import Qt
+        out: dict = {}
+        rows = self._contacts_model.rowCount()
+        for r in range(rows):
+            board = self._contacts_model.index(r, 0).data(Qt.DisplayRole) or ""
+            full  = self._contacts_model.index(r, 1).data(Qt.DisplayRole) or ""
+            mail  = self._contacts_model.index(r, 2).data(Qt.DisplayRole) or ""
+            if board:
+                out[board] = {"full_name": str(full), "email": str(mail)}
+        return out
+    
+    def _contacts_import_csv(self) -> None:
+        """
+        Import CSV s hlavičkami (case-insensitive; varianty akceptované):
+          - board | Board
+          - full_name | Full Name | Name
+          - email | Email | E-mail
+        Řádky se mapují podle 'board'. Nematchnuté boardy se ignorují (nepřidáváme nové).
+        """
+        import csv
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+    
+        path, _ = QFileDialog.getOpenFileName(self, "Import contacts (CSV)", "", "CSV Files (*.csv);;All Files (*)")
+        if not path:
+            return
+    
+        # přečti CSV
+        rows = []
+        try:
+            with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+                rdr = csv.DictReader(fh)
+                # normalizace klíčů
+                norm = lambda s: (s or "").strip().lower()
+                for rec in rdr:
+                    if not isinstance(rec, dict):
+                        continue
+                    row = {norm(k): (v or "").strip() for k, v in rec.items()}
+                    rows.append(row)
+        except Exception as e:
+            QMessageBox.warning(self, "Import CSV", f"Failed to read CSV:\n{e}")
+            return
+    
+        if not rows:
+            QMessageBox.information(self, "Import CSV", "No rows found in the CSV file.")
+            return
+    
+        # mapování názvů sloupců
+        def pick(d: dict, keys: list[str]) -> str:
+            for k in keys:
+                if k in d and d[k]:
+                    return d[k]
+            return ""
+    
+        # Pro rychlý update – vytvoř mapu board -> (full, mail)
+        updates: dict[str, tuple[str, str]] = {}
+        for d in rows:
+            b = pick(d, ["board"])
+            if not b:
+                continue
+            full = pick(d, ["full_name", "full name", "name"])
+            mail = pick(d, ["email", "e-mail", "mail"])
+            updates[b] = (full, mail)
+    
+        if not updates:
+            QMessageBox.information(self, "Import CSV", "No usable data (missing 'board' column).")
+            return
+    
+        # aplikuj do modelu – jen u existujících boardů
+        from PySide6.QtCore import Qt
+        changed = 0
+        for r in range(self._contacts_model.rowCount()):
+            board = self._contacts_model.index(r, 0).data(Qt.DisplayRole)
+            if board in updates:
+                full, mail = updates[board]
+                if full:
+                    self._contacts_model.setData(self._contacts_model.index(r, 1), full, Qt.EditRole)
+                if mail:
+                    self._contacts_model.setData(self._contacts_model.index(r, 2), mail, Qt.EditRole)
+                changed += 1
+    
+        QMessageBox.information(self, "Import CSV", f"Imported/updated contacts for {changed} board(s).")
 
     def _build_sorted_tab(self) -> None:
         """
