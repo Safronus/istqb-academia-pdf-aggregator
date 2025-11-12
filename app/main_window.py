@@ -287,20 +287,20 @@ class MainWindow(QMainWindow):
     def _build_overview_tab(self) -> None:
         layout = QVBoxLayout()
         controls = QHBoxLayout()
-
+    
         self.board_combo = QComboBox()
         self.board_combo.addItem("All")
         for b in sorted(KNOWN_BOARDS):
             self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
-
+    
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
-
+    
         self.open_btn = QPushButton("Open PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
-
+    
         controls.addWidget(QLabel("Board:"))
         controls.addWidget(self.board_combo, 1)
         controls.addSpacing(12)
@@ -308,9 +308,9 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.search_edit, 4)
         controls.addSpacing(12)
         controls.addWidget(self.open_btn)
-
+    
         layout.addLayout(controls)
-
+    
         self.table = QTableView()
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
@@ -319,19 +319,127 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
-
+    
+        # >>> Přidáno: kontextové menu pro editaci v Overview
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.on_overview_context_menu)
+        # <<<
+    
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
-
+    
     def _filter_board(self, txt: str) -> None:
         proxy = self.table.model()
         if isinstance(proxy, RecordsModel):
             proxy.set_board(txt)
-
+    
     def _filter_text(self, txt: str) -> None:
         proxy = self.table.model()
         if isinstance(proxy, RecordsModel):
             proxy.set_search(txt)
+            
+    def on_overview_context_menu(self, pos) -> None:
+        from PySide6.QtWidgets import QMenu
+        idx = self.table.indexAt(pos)
+        if not idx.isValid():
+            return
+        # Zajistíme výběr řádku pod kurzorem
+        self.table.selectRow(idx.row())
+        menu = QMenu(self.table)
+        act_edit = menu.addAction("Edit…")
+        chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
+        if chosen == act_edit:
+            self._edit_overview_row(idx.row())
+
+    def _edit_overview_row(self, proxy_row: int) -> None:
+        from PySide6.QtWidgets import (
+            QDialog, QFormLayout, QLineEdit, QDialogButtonBox
+        )
+        from PySide6.QtGui import QIcon
+        from PySide6.QtWidgets import QStyle
+    
+        model = self.table.model()
+        if model is None:
+            return
+    
+        # Najdi source model a source row
+        if isinstance(model, QSortFilterProxyModel):
+            sidx = model.mapToSource(model.index(proxy_row, 0))
+            src = model.sourceModel()
+            src_row = sidx.row()
+        else:
+            src = model
+            src_row = proxy_row
+    
+        if src is None or src_row < 0:
+            return
+    
+        cols = src.columnCount()
+        file_col = cols - 1  # poslední sloupec = "File name" (needitovat)
+    
+        # Sloupce k editaci = aktuálně VIDITELNÍ v Overview (kromě File name)
+        # (Eligibility 10..14 jsou v Overview skryté už v rescan(); pokud by byly odskryté, stanou se editovatelnými.)
+        editable_cols: list[int] = []
+        for c in range(cols):
+            if c == file_col:
+                continue
+            # dotaz na viditelnost přes proxy (Overview tab)
+            try:
+                if not self.table.isColumnHidden(c):
+                    editable_cols.append(c)
+            except Exception:
+                editable_cols.append(c)
+    
+        # Sestav dialog
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Edit record")
+        form = QFormLayout(dlg)
+    
+        editors: list[tuple[int, QLineEdit]] = []
+        for c in editable_cols:
+            header = src.headerData(c, Qt.Horizontal, Qt.DisplayRole) or f"Column {c}"
+            header = str(header).replace("\n", " • ")
+            val = src.index(src_row, c).data(Qt.DisplayRole)
+            le = QLineEdit(dlg)
+            le.setText("" if val is None else str(val))
+            form.addRow(header + ":", le)
+            editors.append((c, le))
+    
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg)
+        form.addWidget(btns)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+    
+        if dlg.exec_() != QDialog.Accepted:
+            return
+    
+        # Zapis zpět do source modelu
+        for c, le in editors:
+            src.setData(src.index(src_row, c), le.text(), Qt.DisplayRole)
+    
+        # Refresh ikonek pro Wished Recognitions (Academia = 4, Certified = 5)
+        def _set_yesno_icon(col: int) -> None:
+            try:
+                idx = src.index(src_row, col)
+                text = (src.data(idx, Qt.DisplayRole) or "").strip().lower()
+                icon_yes = self.style().standardIcon(QStyle.SP_DialogApplyButton)
+                icon_no  = self.style().standardIcon(QStyle.SP_DialogCancelButton)
+                # Nastavíme dekoraci položky (ekvivalent .setIcon u QStandardItem)
+                src.setData(idx, icon_yes if text in {"yes","on","true","1","checked"} else icon_no, Qt.DecorationRole)
+            except Exception:
+                pass
+    
+        try:
+            _set_yesno_icon(4)
+            _set_yesno_icon(5)
+        except Exception:
+            pass
+    
+        # Info do status baru
+        try:
+            self.statusBar().showMessage("Overview: record edited.")
+        except Exception:
+            pass
 
     # ----- Browser tab -----
     def _build_browser_tab(self) -> None:
