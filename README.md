@@ -1,12 +1,24 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.8c — 2025-11-12
-### PDF Browser
-- **Details panel:** hide fields **"Known Board"** and **"Sorted Status"** (labels remain instantiated for compatibility, only not shown in the form).
+## Version 0.9a — 2025-11-12
+### Board Contacts tab — help & CSV template
+- Tab renamed to **Board Contacts**.
+- Added **Help** with an example CSV for importing contacts.
+- CSV template columns (case-insensitive): `board, full_name, email`.
+- You can **preview** the template in-app and **save** it via “Save CSV template…”.
+
+### CSV example
+```csv
+board,full_name,email
+ATB,Contact for ATB,atb-liaison@example.org
+CSTB,Contact for CSTB,cstb-liaison@example.org
+ISTQB,Contact for ISTQB,istqb-liaison@example.org
+```
 
 ### Notes
-- Minimal-change: no logic altered, no signal/slot changes.
-- Other tabs (Overview, Sorted PDFs) unaffected.
+- JSON persistence remains at `contacts.json` (git-ignored).
+- Fitting of columns remains automatic.
+- No behavior changes to other tabs.
 
 ### macOS quick start
 ```bash
@@ -16,7 +28,3 @@ pip install -r requirements.txt
 python -m app
 ```
 
-### Recent
-- 0.8c — PDF Browser: hide "Known Board" and "Sorted Status" in details panel.
-- 0.8b — Overview export: scope option (Selected rows vs All rows).
-- 0.8 — Overview Board combobox grouped (present + separator + remaining).
