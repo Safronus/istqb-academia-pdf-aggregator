@@ -1298,14 +1298,21 @@ class MainWindow(QMainWindow):
         proxy = self.table.model()
         if isinstance(proxy, RecordsModel):
             proxy.set_search(txt)
-
+            
     def _build_contacts_tab(self) -> None:
         """
-        Contacts tab: Board -> (Full Name, Email)
-        - používá QStandardItemModel (3 sloupce: Board, Full Name, Email)
-        - Board je needitovatelný; ostatní dva sloupce editovatelné
+        Backward-compat shim: původní jméno zavolá aktuální builder.
+        """
+        self._build_board_contacts_tab()
+
+    def _build_board_contacts_tab(self) -> None:
+        """
+        Board Contacts tab: Board -> (Full Name, Email)
+        - QStandardItemModel (3 sloupce: Board, Full Name, Email)
+        - Board = needitovatelný; Full Name/Email = editovatelné
         - JSON perzistence (contacts.json), import CSV
-        - automatický fit sloupců
+        - auto-fit sloupců
+        - NOVĚ: tlačítko Help s nápovědou a ukázkovým CSV (náhled + uložení)
         """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QWidget, QTableView, QPushButton, QMessageBox
@@ -1314,13 +1321,36 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import Qt, QTimer
         from PySide6.QtWidgets import QHeaderView
     
-        layout = QVBoxLayout(self.contacts_tab)
+        # Najdi/usel tab widget:
+        tab_widget = getattr(self, "board_contacts_tab", None)
+        if tab_widget is None:
+            tab_widget = getattr(self, "contacts_tab", None)
+        if tab_widget is None:
+            tab_widget = QWidget()
+            self.board_contacts_tab = tab_widget
+            try:
+                self.tabs.addTab(tab_widget, "Board Contacts")
+            except Exception:
+                pass
+        else:
+            # přejmenuj tab (pokud existuje v QTabWidget)
+            try:
+                idx = self.tabs.indexOf(tab_widget)
+                if idx >= 0:
+                    self.tabs.setTabText(idx, "Board Contacts")
+            except Exception:
+                pass
+    
+        layout = QVBoxLayout(tab_widget)
     
         # Ovládací řádek
         bar = QHBoxLayout()
+        self.btn_contacts_help = QPushButton("Help")
         self.btn_contacts_import = QPushButton("Import CSV…")
         self.btn_contacts_save = QPushButton("Save")
         self.btn_contacts_reload = QPushButton("Reload")
+        bar.addWidget(self.btn_contacts_help)
+        bar.addSpacing(8)
         bar.addWidget(self.btn_contacts_import)
         bar.addStretch(1)
         bar.addWidget(self.btn_contacts_reload)
@@ -1328,7 +1358,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(bar)
     
         # Tabulka
-        self.tbl_contacts = QTableView(self.contacts_tab)
+        self.tbl_contacts = QTableView(tab_widget)
         self.tbl_contacts.setSelectionBehavior(QTableView.SelectRows)
         self.tbl_contacts.setSelectionMode(QTableView.ExtendedSelection)
         self.tbl_contacts.setSortingEnabled(True)
@@ -1360,6 +1390,7 @@ class MainWindow(QMainWindow):
         self.btn_contacts_save.clicked.connect(lambda: self._save_contacts_json(self._contacts_collect_data()))
         self.btn_contacts_reload.clicked.connect(self._contacts_rebuild_model)
         self.btn_contacts_import.clicked.connect(self._contacts_import_csv)
+        self.btn_contacts_help.clicked.connect(self._contacts_show_help)
     
         # Finální doladění velikostí po vykreslení
         def _refit():
@@ -1369,6 +1400,85 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         QTimer.singleShot(0, _refit)
+        
+    def _contacts_show_help(self) -> None:
+        """
+        Zobrazí dialog s nápovědou/importními tipy a ukázkovým CSV.
+        Umožní uložit šablonu CSV do souboru.
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QLabel, QPlainTextEdit,
+            QDialogButtonBox, QPushButton, QFileDialog, QWidget, QHBoxLayout
+        )
+        from PySide6.QtCore import Qt
+    
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Board Contacts — Help")
+        lay = QVBoxLayout(dlg)
+    
+        help_text = (
+            "CSV columns (case-insensitive):\n"
+            "  - board\n"
+            "  - full_name (or 'Full Name' / 'Name')\n"
+            "  - email (or 'E-mail')\n\n"
+            "Rows are matched by 'board'. Unknown boards are ignored (not added).\n"
+            "Empty values are allowed.\n\n"
+            "Example CSV:\n"
+        )
+        lay.addWidget(QLabel(help_text))
+    
+        sample = self._contacts_sample_csv()
+    
+        viewer = QPlainTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(sample)
+        viewer.setLineWrapMode(QPlainTextEdit.NoWrap)
+        lay.addWidget(viewer, 1)
+    
+        # Buttons: Save template… + Close
+        btns_bar = QHBoxLayout()
+        btn_save = QPushButton("Save CSV template…")
+        btns_bar.addWidget(btn_save)
+        btns_bar.addStretch(1)
+        lay.addLayout(btns_bar)
+    
+        def _save():
+            path, _ = QFileDialog.getSaveFileName(dlg, "Save CSV template…", "board_contacts_template.csv", "CSV Files (*.csv);;All Files (*)")
+            if not path:
+                return
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(sample)
+            except Exception as e:
+                # Plain info — nenaruší běh
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(dlg, "Save CSV template", f"Failed to save:\n{e}")
+    
+        btn_save.clicked.connect(_save)
+    
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        lay.addWidget(buttons)
+    
+        dlg.resize(720, 420)
+        dlg.exec_()
+        
+    def _contacts_sample_csv(self) -> str:
+        """
+        Vrátí ukázkové CSV s hlavičkou a několika boardy.
+        """
+        try:
+            boards = sorted(KNOWN_BOARDS)
+        except Exception:
+            boards = ["ATB", "CSTB", "ISTQB"]
+        # Vezmi prvních pár pro příklad
+        sample_boards = boards[:3] if len(boards) >= 3 else boards
+        lines = ["board,full_name,email"]
+        for b in sample_boards:
+            email = f"{''.join(ch for ch in b.lower() if ch.isalnum())}-liaison@example.org"
+            lines.append(f"{b},Contact for {b},{email}")
+        return "\n".join(lines) + "\n"
         
     def _contacts_json_path(self):
         """
