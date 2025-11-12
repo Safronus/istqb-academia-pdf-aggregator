@@ -192,7 +192,6 @@ class OverviewTableView(QTableView):
 
 
 
-
 class RecordsModel(QSortFilterProxyModel):
     def __init__(self, headers: List[str], parent=None):
         super().__init__(parent)
@@ -212,7 +211,7 @@ class RecordsModel(QSortFilterProxyModel):
         model = self.sourceModel()
         if model is None:
             return True
-        # Board filter is based on column 0 (Board)
+        # Board filter je navázaný na sloupec 0 (Board) v SOURCE modelu
         idx_board = model.index(source_row, 0, source_parent)
         board_val = (model.data(idx_board, Qt.DisplayRole) or "").strip()
         if self.board_filter != "All" and board_val != self.board_filter:
@@ -221,39 +220,61 @@ class RecordsModel(QSortFilterProxyModel):
         if not self.search:
             return True
 
-        # Search across all columns
+        # Full-text přes všechny sloupce SOURCE modelu
         for c in range(model.columnCount()):
             idx = model.index(source_row, c, source_parent)
-            val = (model.data(idx, Qt.DisplayRole) or "").lower()
-            if self.search in val:
+            val = model.data(idx, Qt.DisplayRole)
+            if isinstance(val, str) and self.search in val.lower():
                 return True
         return False
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        """Řazení: Board → Application Type → Candidate Name."""
+        """Řazení: Board → Application Type → Candidate Name (v SOURCE modelu)."""
         model = self.sourceModel()
         if model is None:
             return super().lessThan(left, right)
-    
+
         def data(row: int, col: int) -> str:
             idx = model.index(row, col)
             return (model.data(idx, Qt.DisplayRole) or "").strip()
-    
+
         BOARD = 0
         APP   = 1
         CAND  = 3
-    
+
         a_board = data(left.row(), BOARD).lower()
         b_board = data(right.row(), BOARD).lower()
-    
+
+        # Preferuj "New Application" před "Additional Recognition"
         order = {"new application": 0, "additional recognition": 1}
-        a_app = order.get(data(left.row(), APP).lower(), 2)
-        b_app = order.get(data(right.row(), APP).lower(), 2)
-    
+        a_app = order.get(data(left.row(), APP).lower().lstrip("/"), 2)
+        b_app = order.get(data(right.row(), APP).lower().lstrip("/"), 2)
+
         a_cand = data(left.row(), CAND).lower()
         b_cand = data(right.row(), CAND).lower()
-    
+
         return (a_board, a_app, a_cand) < (b_board, b_app, b_cand)
+
+    # --- NOVÉ: sanitizace zobrazení Application Type v proxy ---
+    def _is_application_type_column(self, col: int) -> bool:
+        """Vrátí True, pokud daný sloupec je 'Application Type' (podle headeru SOURCE modelu)."""
+        src = self.sourceModel()
+        if src is None:
+            return False
+        hdr = src.headerData(col, Qt.Horizontal, Qt.DisplayRole)
+        if isinstance(hdr, str):
+            h = hdr.lower().replace("\n", " ")
+            return "application type" in h
+        return False
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        # Pro DisplayRole odstraň úvodní "/" u Application Type (prezentační fix)
+        if role == Qt.DisplayRole and index.isValid() and self._is_application_type_column(index.column()):
+            val = super().data(index, role)
+            if isinstance(val, str) and val.startswith('/'):
+                return val.lstrip('/')
+            return val
+        return super().data(index, role)
 
 class MainWindow(QMainWindow):
     def __init__(self, pdf_root: Path):
@@ -1811,10 +1832,11 @@ class MainWindow(QMainWindow):
             ):
                 lbl.setText("-")
             return
-
+    
         self.lbl_board.setText(rec.board)
         self.lbl_known.setText("Yes" if rec.board_known else "Unverified")
-        self.lbl_app_type.setText(rec.application_type or "")
+        # ✅ Odstranění úvodního "/" u Application Type (prezentace bez zásahu do dat)
+        self.lbl_app_type.setText((rec.application_type or "").lstrip("/"))
         self.lbl_inst.setText(rec.institution_name or "")
         self.lbl_cand.setText(rec.candidate_name or "")
         self.lbl_acad.setText(rec.recognition_academia or "")
