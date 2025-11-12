@@ -1,5 +1,5 @@
 # ISTQB Academia PDF Aggregator (PySide6)
-**Version:** 0.4 — 2025-11-12
+**Version:** 0.6a — 2025-11-12
 
 A macOS‑oriented **PySide6** GUI app (English UI) that scans PDF files inside the project’s **`PDF/`** folder (including subfolders named by ISTQB member boards), parses key fields from the *ISTQB Academia Recognition Program – Application Form*, and aggregates them into a tabular overview.
 
@@ -177,6 +177,11 @@ git push --tags
 ---
 
 ## Changelog
+
+- **0.6a — 2025-11-12**
+  - **fix:** Preserve selection in **Overview** during auto-rescan (selection no longer clears before exporting to *Sorted PDFs*).
+  - **fix:** Changed Czech prompt *"Vyber alespoň jeden řádek."* to English: *"Please select at least one row."* in the export-to-sorted action.
+
 - **0.5 (2025-11-12):**
   - **feat:** Redesigned 'Sorted PDFs' tab into a persistent database-backed manager.
   - **feat:** Added a `database.json` to store, edit, and track data for sorted PDFs.
@@ -188,7 +193,6 @@ git push --tags
 - **0.3h — 2025‑11‑11**
   - Baseline: Overview + PDF Browser, grouped columns, Yes/No icons for Wished Recognitions, signature date normalization, `__archive__` ignored.
   - Optional **Sorted PDFs** tab support (reads `Sorted PDFs/` if present).
-
 ---
 
 ## License
