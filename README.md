@@ -1,30 +1,23 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.9a — 2025-11-12
-### Board Contacts tab — help & CSV template
-- Tab renamed to **Board Contacts**.
-- Added **Help** with an example CSV for importing contacts.
-- CSV template columns (case-insensitive): `board, full_name, email`.
-- You can **preview** the template in-app and **save** it via “Save CSV template…”.
-
-### CSV example
-```csv
-board,full_name,email
-ATB,Contact for ATB,atb-liaison@example.org
-CSTB,Contact for CSTB,cstb-liaison@example.org
-ISTQB,Contact for ISTQB,istqb-liaison@example.org
-```
+## Version 0.10b — 2025-11-12
+### Fix: Recognized People — candidates from Sorted DB
+- **Add dialog** now discovers candidates robustněji:
+  - prefers in-memory attrs: `self.sorted_db`, `_sorted_db`, `sorted_records`, `_sorted_records` (list/dict),
+  - can **optionally** read common JSON paths if present (e.g. `sorted_db.json`, `sorted_records.json`, `Sorted PDFs/sorted_db.json`),
+  - as a **fallback**, it can derive candidates z **Overview** tabulky (pokud není k dispozici Sorted DB).
+- Přepínač **From Sorted PDFs** zůstává dostupný; pokud jsou kandidáti nalezeni, combobox je zaplněn.
 
 ### Notes
-- JSON persistence remains at `contacts.json` (git-ignored).
-- Fitting of columns remains automatic.
-- No behavior changes to other tabs.
+- Minimal-change: bez zásahu do stávající logiky tabů.
+- Doporučení: pokud používáte vlastní strukturu/atribut Sorted DB, předejte mi prosím název/ukázku a rád doplním přesné mapování.
 
-### macOS quick start
+---
+
+## macOS quick start
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m app
 ```
-
