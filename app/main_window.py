@@ -532,7 +532,7 @@ class MainWindow(QMainWindow):
     def _build_overview_tab(self) -> None:
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-            QPushButton, QToolButton, QMenu
+            QPushButton, QToolButton, QMenu, QAbstractItemView
         )
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QStyle
@@ -540,7 +540,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # Unparsed (pokud už máš – ponecháno)
+        # Unparsed (pokud je už v projektu – ponecháno)
         self.btn_unparsed = QToolButton(self)
         self.btn_unparsed.setText("Unparsed")
         self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
@@ -554,7 +554,8 @@ class MainWindow(QMainWindow):
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
-        self.btn_export.setAutoRaise(True)
+        self.btn_export.setAutoRaise(True
+        )
         self.btn_export.clicked.connect(self.on_export_overview)
         controls.addWidget(self.btn_export)
     
@@ -585,17 +586,18 @@ class MainWindow(QMainWindow):
     
         layout.addLayout(controls)
     
-        # === DŮLEŽITÉ: použijeme OverviewTableView (automaticky aplikuje proxy) ===
+        # POZOR: OverviewTableView už má nasazený proxy model pro "No." a Board-grouping
         self.table = OverviewTableView(self)
-        self.table.setSelectionBehavior(self.table.SelectRows)
-        self.table.setSelectionMode(self.table.ExtendedSelection)
+        # ✅ OPRAVA: používáme enumy z QAbstractItemView (ne atributy instance)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.doubleClicked.connect(self.open_selected_pdf)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # Kontextové menu – export do Sorted (ponecháno)
+        # Kontextové menu – export do Sorted
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
     
         def _ctx(pos):
