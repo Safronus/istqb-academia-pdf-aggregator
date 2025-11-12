@@ -189,21 +189,19 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._apply_global_sizing_once)
 
 
-
     def _build_recognized_tab(self) -> None:
         """
         Recognized People List:
           - Tabulka: Board, Full Name, Email, Address, Recognition Date, Badge Types, Badge Link, Valid Until
           - Akce: Add…, Edit…, Delete, Reload, Save
           - JSON perzistence (recognized_people.json)
-          - Fitting sloupců podle dat
+          - Fitting sloupců + barevné zvýraznění řádků při přepnutí do záložky
         """
         from PySide6.QtWidgets import (
-            QVBoxLayout, QHBoxLayout, QWidget, QTableView, QPushButton
+            QVBoxLayout, QHBoxLayout, QWidget, QTableView, QPushButton, QHeaderView
         )
         from PySide6.QtGui import QStandardItemModel
         from PySide6.QtCore import Qt, QTimer
-        from PySide6.QtWidgets import QHeaderView
     
         layout = QVBoxLayout(self.recognized_tab)
     
@@ -240,12 +238,10 @@ class MainWindow(QMainWindow):
         hdr = self.tbl_recognized.horizontalHeader()
         hdr.setStretchLastSection(True)
         try:
-            for c in range(len(self._recognized_headers)):
-                from PySide6.QtWidgets import QHeaderView
-                hdr.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+            hdr.setSectionResizeMode(QHeaderView.ResizeToContents)
         except Exception:
             try:
-                hdr.setResizeMode(0, QHeaderView.ResizeToContents)  # Qt5 fallback
+                hdr.setResizeMode(0, QHeaderView.ResizeToContents)
             except Exception:
                 pass
     
@@ -261,8 +257,29 @@ class MainWindow(QMainWindow):
         self.btn_rec_reload.clicked.connect(self._recognized_rebuild_model)
         self.btn_rec_save.clicked.connect(lambda: self._save_recognized_json(self._recognized_collect_data()))
     
-        # Po vykreslení jemné dofitování
+        # Po vykreslení dofituj a aplikuj barvy
         QTimer.singleShot(0, self._recognized_fit_columns)
+        QTimer.singleShot(0, self._recognized_apply_row_colors)
+    
+        # Spusť zvýraznění při přepnutí do záložky (jen jednou napoj)
+        if hasattr(self, "tabs") and not getattr(self, "_rec_tab_hooked", False):
+            try:
+                self.tabs.currentChanged.connect(self._recognized_on_tab_changed)
+                self._rec_tab_hooked = True
+            except Exception:
+                pass
+            
+    def _recognized_on_tab_changed(self, index: int) -> None:
+        """
+        Při přepnutí na Recognized tab obnov barvy (a můžeš i dofit sloupce).
+        """
+        try:
+            w = self.tabs.widget(index)
+            if w is self.recognized_tab:
+                self._recognized_apply_row_colors()
+                self._recognized_fit_columns()
+        except Exception:
+            pass
 
     def _recognized_json_path(self):
         """Cesta k JSONu s recognized osobami (repo root)."""
@@ -300,7 +317,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Save recognized", f"Failed to save recognized_people.json:\n{e}")    
     
     def _recognized_rebuild_model(self) -> None:
-        """Načti JSON a naplň model; dopočítej Valid Until; fit sloupce."""
+        """
+        Načti JSON a naplň model.
+        - Pokud záznam obsahuje oba badge (academia & certified), zobraz ho jako DVA řádky (sdruženě vložené).
+        - 'Valid Until' se přepočítá z 'Recognition Date' (+365 dní), pokud chybí nebo je prázdné.
+        """
         from PySide6.QtGui import QStandardItem
         from PySide6.QtCore import Qt
         from datetime import datetime, timedelta
@@ -315,6 +336,16 @@ class MainWindow(QMainWindow):
             except Exception:
                 return ""
     
+        def _append_row(board, full, mail, addr, rdate, acad, cert, blink):
+            badges = "; ".join([s for s, b in (("Academia", acad), ("Certified", cert)) if b])
+            vuntil = _valid_until(rdate)
+            vals = [board, full, mail, addr, rdate, badges, blink, vuntil]
+            items = [QStandardItem(str(v)) for v in vals]
+            for it in items:
+                it.setEditable(False)
+            self._recognized_model.appendRow(items)
+    
+        # projdi JSON a vkládej 1 nebo 2 řádky
         for rec in data:
             board = rec.get("board", "") or ""
             full  = rec.get("full_name", "") or ""
@@ -324,19 +355,14 @@ class MainWindow(QMainWindow):
             acad  = bool(rec.get("academia", False))
             cert  = bool(rec.get("certified", False))
             blink = rec.get("badge_link", "") or ""
-            vuntil= rec.get("valid_until", "") or _valid_until(rdate)
     
-            badges = "; ".join([s for s, b in (("Academia", acad), ("Certified", cert)) if b])
+            if acad and cert:
+                _append_row(board, full, mail, addr, rdate, True,  False, blink)
+                _append_row(board, full, mail, addr, rdate, False, True,  blink)
+            else:
+                _append_row(board, full, mail, addr, rdate, acad, cert, blink)
     
-            row = []
-            for val in (board, full, mail, addr, rdate, badges, blink, vuntil):
-                it = QStandardItem(str(val))
-                # vše editovatelné přes Edit dialog; v tabulce ponecháme readonly (abychom hlídali validaci)
-                it.setEditable(False)
-                row.append(it)
-            self._recognized_model.appendRow(row)
-    
-        self._recognized_fit_columns()    
+        self._recognized_fit_columns() 
     
     def _recognized_collect_data(self) -> list[dict]:
         """Převeď model -> JSON list."""
@@ -716,52 +742,93 @@ class MainWindow(QMainWindow):
         return result if dlg.exec_() == QDialog.Accepted else None
     
     def _recognized_add(self) -> None:
-        """Přidání nové osoby s badge (s kontrolou duplikátů)."""
+        """
+        Přidání osoby. Při volbě obou badge vloží DVA řádky (po kontrole duplicit per-badge).
+        Duplikát: (full_name + badge_link) NEBO (full_name + recognition_date + badge-typ).
+        """
         from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtGui import QStandardItem
+        from PySide6.QtCore import Qt
+        from datetime import datetime, timedelta
+    
         new = self._recognized_open_add_dialog(None)
         if not new:
             return
     
-        # Duplikáty: (full_name + badge_link) nebo (full_name + date + badge set)
-        def _badge_key(d: dict) -> str:
-            return f"{int(bool(d.get('academia')))}-{int(bool(d.get('certified')))}"
+        def _badge_rows(n: dict) -> list[tuple[bool, bool]]:
+            a = bool(n.get("academia"))
+            c = bool(n.get("certified"))
+            if a and c:
+                return [(True, False), (False, True)]
+            return [(a, c)]
     
-        full = (new.get("full_name","") or "").strip().lower()
-        link = (new.get("badge_link","") or "").strip().lower()
-        dstr = (new.get("recognition_date","") or "").strip()
-        bkey = _badge_key(new)
+        def _dup_exists(full_l, link_l, dstr, acad, cert) -> bool:
+            bkey = f"{int(bool(acad))}-{int(bool(cert))}"
+            for r in range(self._recognized_model.rowCount()):
+                f2 = (self._recognized_model.index(r, 1).data(Qt.DisplayRole) or "").strip().lower()
+                l2 = (self._recognized_model.index(r, 6).data(Qt.DisplayRole) or "").strip().lower()
+                d2 = (self._recognized_model.index(r, 4).data(Qt.DisplayRole) or "").strip()
+                b2s= (self._recognized_model.index(r, 5).data(Qt.DisplayRole) or "").lower()
+                b2 = f"{int('academia' in b2s)}-{int('certified' in b2s)}"
+                if f2 == full_l and (l2 == link_l or (d2 == dstr and b2 == bkey)):
+                    return True
+            return False
     
-        for rec in self._recognized_collect_data():
-            if (rec.get("full_name","").strip().lower() == full and
-                (rec.get("badge_link","").strip().lower() == link or
-                 (rec.get("recognition_date","").strip() == dstr and _badge_key(rec) == bkey))):
-                QMessageBox.information(self, "Duplicate", "This person/badge already exists.")
-                return
+        board = new.get("board","")
+        full  = new.get("full_name","")
+        mail  = new.get("email","")
+        addr  = new.get("address","")
+        rdate = new.get("recognition_date","")
+        link  = new.get("badge_link","")
     
-        # Vložit do modelu
-        from PySide6.QtGui import QStandardItem
-        row_vals = [
-            new.get("board",""), new.get("full_name",""), new.get("email",""), new.get("address",""),
-            new.get("recognition_date",""),
-            "; ".join([s for s,b in (("Academia", new.get("academia")), ("Certified", new.get("certified"))) if b]),
-            new.get("badge_link",""), new.get("valid_until",""),
-        ]
-        items = [QStandardItem(str(v)) for v in row_vals]
-        for it in items: it.setEditable(False)
-        self._recognized_model.appendRow(items)
-        self._recognized_fit_columns()    
+        full_l = (full or "").strip().lower()
+        link_l = (link or "").strip().lower()
+        dstr   = (rdate or "").strip()
+    
+        rows_to_add = []
+        for acad, cert in _badge_rows(new):
+            if _dup_exists(full_l, link_l, dstr, acad, cert):
+                continue
+            badges = "; ".join([s for s,b in (("Academia", acad), ("Certified", cert)) if b])
+            # recompute valid until from rdate
+            try:
+                dt = datetime.strptime(rdate, "%Y-%m-%d").date()
+                vuntil = (dt + timedelta(days=365)).isoformat()
+            except Exception:
+                vuntil = ""
+            vals = [board, full, mail, addr, rdate, badges, link, vuntil]
+            rows_to_add.append([QStandardItem(str(v)) for v in vals])
+    
+        if not rows_to_add:
+            QMessageBox.information(self, "Duplicate", "This person/badge already exists.")
+            return
+    
+        for items in rows_to_add:
+            for it in items:
+                it.setEditable(False)
+            self._recognized_model.appendRow(items)
+    
+        self._recognized_fit_columns()
+        self._recognized_apply_row_colors()
     
     def _recognized_edit(self) -> None:
-        """Editace vybrané osoby (první ze selection)."""
+        """
+        Editace vybraného řádku. Pokud uživatel vybere oba badge:
+          - aktuální řádek se upraví na jeden z badge (ponecháme jeho původní typ, pokud lze),
+          - chybějící badge se vloží jako NOVÝ řádek (pokud nejde o duplikát).
+        """
         from PySide6.QtWidgets import QMessageBox
         from PySide6.QtCore import Qt
+        from PySide6.QtGui import QStandardItem
+        from datetime import datetime, timedelta
+    
         sel = self.tbl_recognized.selectionModel().selectedRows()
         if not sel:
             QMessageBox.information(self, "Edit", "Select a row to edit.")
             return
         r = sel[0].row()
     
-        # Připrav initial
+        # Původní hodnoty
         cur = {
             "board": self._recognized_model.index(r,0).data(Qt.DisplayRole) or "",
             "full_name": self._recognized_model.index(r,1).data(Qt.DisplayRole) or "",
@@ -770,47 +837,111 @@ class MainWindow(QMainWindow):
             "recognition_date": self._recognized_model.index(r,4).data(Qt.DisplayRole) or "",
             "badge_link": self._recognized_model.index(r,6).data(Qt.DisplayRole) or "",
         }
-        badges = (self._recognized_model.index(r,5).data(Qt.DisplayRole) or "").lower()
-        cur["academia"] = "academia" in badges
-        cur["certified"] = "certified" in badges
+        btxt = (self._recognized_model.index(r,5).data(Qt.DisplayRole) or "").lower()
+        cur["academia"]  = "academia"  in btxt
+        cur["certified"] = "certified" in btxt
     
         upd = self._recognized_open_add_dialog(cur)
         if not upd:
             return
     
-        # Duplikáty proti ostatním řádkům (mimo aktuální)
-        def _badge_key(d: dict) -> str:
-            return f"{int(bool(d.get('academia')))}-{int(bool(d.get('certified')))}"
+        def _dup_exists_excluding_row(full_l, link_l, dstr, acad, cert, skip_row) -> bool:
+            bkey = f"{int(bool(acad))}-{int(bool(cert))}"
+            for rr in range(self._recognized_model.rowCount()):
+                if rr == skip_row:
+                    continue
+                f2 = (self._recognized_model.index(rr,1).data(Qt.DisplayRole) or "").strip().lower()
+                l2 = (self._recognized_model.index(rr,6).data(Qt.DisplayRole) or "").strip().lower()
+                d2 = (self._recognized_model.index(rr,4).data(Qt.DisplayRole) or "").strip()
+                b2s= (self._recognized_model.index(rr,5).data(Qt.DisplayRole) or "").lower()
+                b2 = f"{int('academia' in b2s)}-{int('certified' in b2s)}"
+                if f2 == full_l and (l2 == link_l or (d2 == dstr and b2 == bkey)):
+                    return True
+            return False
     
-        full = (upd.get("full_name","") or "").strip().lower()
-        link = (upd.get("badge_link","") or "").strip().lower()
-        dstr = (upd.get("recognition_date","") or "").strip()
-        bkey = _badge_key(upd)
+        board = upd.get("board",""); full = upd.get("full_name",""); mail = upd.get("email","")
+        addr = upd.get("address",""); rdate = upd.get("recognition_date",""); link = upd.get("badge_link","")
+        full_l = (full or "").strip().lower()
+        link_l = (link or "").strip().lower()
+        dstr   = (rdate or "").strip()
     
+        want_acad = bool(upd.get("academia"))
+        want_cert = bool(upd.get("certified"))
+    
+        # Rozhodni, který badge ponechat v aktuálním řádku (preferuj ten, který tam už byl)
+        keep_acad = want_acad and cur["academia"]
+        keep_cert = want_cert and cur["certified"]
+        if not (keep_acad or keep_cert):
+            # pokud se badge změnil, vezmeme první zvolený (prefer Academia)
+            keep_acad = want_acad
+            keep_cert = (not keep_acad) and want_cert
+    
+        # Přepočítej Valid Until
+        try:
+            dt = datetime.strptime(rdate, "%Y-%m-%d").date()
+            vuntil = (dt + timedelta(days=365)).isoformat()
+        except Exception:
+            vuntil = ""
+    
+        # Update aktuálního řádku
+        badges_keep = "; ".join([s for s,b in (("Academia", keep_acad), ("Certified", keep_cert)) if b])
+        vals = [board, full, mail, addr, rdate, badges_keep, link, vuntil]
+        for c, v in enumerate(vals):
+            self._recognized_model.setData(self._recognized_model.index(r, c), str(v))
+    
+        # Pokud je vybrán i druhý badge, který v aktuálním řádku není → vlož nový
+        add_second = (want_acad and not keep_acad) or (want_cert and not keep_cert)
+        if add_second:
+            sec_acad = want_acad and not keep_acad
+            sec_cert = want_cert and not keep_cert
+            if not _dup_exists_excluding_row(full_l, link_l, dstr, sec_acad, sec_cert, r):
+                btxt2 = "; ".join([s for s,b in (("Academia", sec_acad), ("Certified", sec_cert)) if b])
+                items = [QStandardItem(str(v)) for v in [board, full, mail, addr, rdate, btxt2, link, vuntil]]
+                for it in items:
+                    it.setEditable(False)
+                # vlož hned pod aktuální řádek kvůli "sdružení"
+                self._recognized_model.insertRow(r + 1, items)
+    
+        self._recognized_fit_columns()
+        self._recognized_apply_row_colors() 
+        
+    def _recognized_apply_row_colors(self) -> None:
+        """
+        Podbarvení řádků podle platnosti (Valid Until vs dnešek):
+          - > 30 dnů: zelená
+          - 0..30 dnů: žlutá
+          - < 0 dnů: červená
+        """
+        from PySide6.QtGui import QColor, QBrush
         from PySide6.QtCore import Qt
-        for rr in range(self._recognized_model.rowCount()):
-            if rr == r: 
-                continue
-            f2 = (self._recognized_model.index(rr,1).data(Qt.DisplayRole) or "").strip().lower()
-            l2 = (self._recognized_model.index(rr,6).data(Qt.DisplayRole) or "").strip().lower()
-            d2 = (self._recognized_model.index(rr,4).data(Qt.DisplayRole) or "").strip()
-            b2s= (self._recognized_model.index(rr,5).data(Qt.DisplayRole) or "").lower()
-            b2 = f"{int('academia' in b2s)}-{int('certified' in b2s)}"
-            if f2 == full and (l2 == link or (d2 == dstr and b2 == bkey)):
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.information(self, "Duplicate", "This person/badge already exists.")
-                return
+        from datetime import datetime, date
     
-        # Zapiš změny
-        vals = [
-            upd.get("board",""), upd.get("full_name",""), upd.get("email",""), upd.get("address",""),
-            upd.get("recognition_date",""),
-            "; ".join([s for s,b in (("Academia", upd.get("academia")), ("Certified", upd.get("certified"))) if b]),
-            upd.get("badge_link",""), upd.get("valid_until",""),
-        ]
-        for c, val in enumerate(vals):
-            self._recognized_model.setData(self._recognized_model.index(r, c), str(val))
-        self._recognized_fit_columns()    
+        try:
+            today = date.today()
+            rows = self._recognized_model.rowCount()
+            for r in range(rows):
+                vuntil_s = self._recognized_model.index(r, 7).data(Qt.DisplayRole) or ""
+                col_brush = None
+                try:
+                    vuntil = datetime.strptime(vuntil_s, "%Y-%m-%d").date()
+                    days_left = (vuntil - today).days
+                    if days_left > 30:
+                        col_brush = QBrush(QColor(40, 140, 60, 60))    # zelená (jemná)
+                    elif days_left >= 0:
+                        col_brush = QBrush(QColor(200, 160, 20, 70))   # žlutá
+                    else:
+                        col_brush = QBrush(QColor(200, 60, 60, 80))    # červená
+                except Exception:
+                    col_brush = None
+    
+                if col_brush:
+                    for c in range(self._recognized_model.columnCount()):
+                        self._recognized_model.item(r, c).setBackground(col_brush)
+                else:
+                    for c in range(self._recognized_model.columnCount()):
+                        self._recognized_model.item(r, c).setBackground(QBrush())
+        except Exception:
+            pass
     
     def _recognized_delete(self) -> None:
         """Smazání vybraných řádků (s potvrzením)."""
