@@ -1283,16 +1283,16 @@ class MainWindow(QMainWindow):
     def _build_overview_tab(self) -> None:
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
-            QPushButton, QTableView, QToolButton, QMenu, QCheckBox
+            QPushButton, QTableView, QToolButton, QMenu, QCheckBox, QStyle
         )
         from PySide6.QtCore import Qt, QTimer
-        from PySide6.QtWidgets import QStyle
-        from PySide6.QtGui import QStandardItemModel
+        from PySide6.QtGui import QStandardItemModel, QIcon, QPainter, QBrush
+        from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QApplication
     
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # === Unparsed tlačítko (beze změny) ===
+        # === Unparsed tlačítko ===
         self.btn_unparsed = QToolButton(self)
         self.btn_unparsed.setText("Unparsed")
         self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
@@ -1301,7 +1301,7 @@ class MainWindow(QMainWindow):
         self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
         self.btn_unparsed.clicked.connect(self.show_unparsed_report)
     
-        # === Export (beze změny) ===
+        # === Export ===
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
@@ -1309,29 +1309,28 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.on_export_overview)
         controls.addWidget(self.btn_export)
     
-        # === Board filtr (beze změny) ===
+        # === Board filtr ===
         self.board_combo = QComboBox()
         self.board_combo.addItem("All")
         for b in sorted(KNOWN_BOARDS):
             self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
-        # === Fulltext (beze změny) ===
+        # === Fulltext ===
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
     
-        # === Open Selected PDF (beze změny) ===
+        # === Open Selected PDF ===
         self.open_btn = QPushButton("Open Selected PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
     
-        # === NOVÉ: Checkbox "Sorted" (filtr) ===
+        # === Checkbox "Sorted" (filter) ===
         self.chk_overview_sorted = QCheckBox("Sorted")
         self.chk_overview_sorted.setToolTip("Show/hide records that are already in 'Sorted PDFs'")
         self.chk_overview_sorted.setChecked(True)
         self.chk_overview_sorted.toggled.connect(self._on_overview_sorted_toggled)
     
-        # Controls layout
         controls.addWidget(self.btn_unparsed)
         controls.addSpacing(12)
         controls.addWidget(QLabel("Board:"))
@@ -1355,7 +1354,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # === HLAVIČKY – přidán POSLEDNÍ sloupec "Sorted" ===
+        # === HLAVIČKY (poslední "Sorted") ===
         self._headers = [
             "Board",
             "Application\nApplication Type",
@@ -1374,15 +1373,14 @@ class MainWindow(QMainWindow):
             "Eligibility Evidence\nAdditional Info/Documents",
             "Signature Date",
             "File\nFile name",
-            "Sorted",  # <— NOVÝ poslední sloupec
+            "Sorted",
         ]
     
-        # === Model + proxy (beze změny) ===
+        # Model + proxy
         if not hasattr(self, "_source_model"):
             self._source_model = QStandardItemModel(0, len(self._headers), self)
             self._source_model.setHorizontalHeaderLabels(self._headers)
         else:
-            # Pokud model existuje, zajistíme správný počet sloupců a popisky
             self._source_model.setColumnCount(len(self._headers))
             self._source_model.setHorizontalHeaderLabels(self._headers)
     
@@ -1392,14 +1390,55 @@ class MainWindow(QMainWindow):
             self._proxy.setDynamicSortFilter(True)
         self.table.setModel(self._proxy)
     
-        # Hiding delegate pro Board (beze změny)
+        # Delegate, který vykreslí ikony uprostřed buňky
+        class IconCenterDelegate(QStyledItemDelegate):
+            def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
+                icon = index.data(Qt.DecorationRole)
+                if icon:
+                    opt = QStyleOptionViewItem(option)
+                    self.initStyleOption(opt, index)
+                    # vykresli background/selection bez textu/ikony
+                    txt, deco = opt.text, opt.icon
+                    opt.text = ""
+                    opt.icon = QIcon()
+                    style = QApplication.style() if opt.widget is None else opt.widget.style()
+                    style.drawControl(QStyle.CE_ItemViewItem, opt, painter)
+                    # vykresli ikonu doprostřed
+                    pm = icon.pixmap(opt.decorationSize if opt.decorationSize.isValid() else opt.rect.size())
+                    x = opt.rect.x() + (opt.rect.width() - pm.width()) // 2
+                    y = opt.rect.y() + (opt.rect.height() - pm.height()) // 2
+                    painter.drawPixmap(x, y, pm)
+                else:
+                    super().paint(painter, option, index)
+    
+        # Hiding delegate pro Board
         self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
     
-        # Skryj Eligibility sloupce (beze změny indexů)
+        # === Přidání IconCenterDelegate na Wished + Sorted ===
+        from PySide6.QtWidgets import QHeaderView
+        def _find_col_tail(tail: str) -> int | None:
+            for i, h in enumerate(self._headers):
+                t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
+                if t.lower() == tail.lower():
+                    return i
+            return None
+    
+        col_acad = _find_col_tail("Academia Recognition")
+        col_cert = _find_col_tail("Certified Recognition")
+        col_sorted = _find_col_tail("Sorted")
+        center_delegate = IconCenterDelegate(self.table)
+        if col_acad is not None:
+            self.table.setItemDelegateForColumn(col_acad, center_delegate)
+        if col_cert is not None:
+            self.table.setItemDelegateForColumn(col_cert, center_delegate)
+        if col_sorted is not None:
+            self.table.setItemDelegateForColumn(col_sorted, center_delegate)
+    
+        # Skryj Eligibility sloupce
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # === Kontextové menu – export do Sorted (beze změny) ===
+        # Kontextové menu – export do Sorted (beze změny)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         def _ctx(pos):
             idx = self.table.indexAt(pos)
@@ -1418,8 +1457,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
     
-        # === NOVÉ: udržování sloupce „Sorted“ + aplikace filtru ===
-        # Po prvním vykreslení doplníme hodnoty a aplikujeme skrytí dle checkboxu.
+        # === Post-build: jednorázový refresh ikon Sorted + hiding ===
         def _post_build():
             try:
                 self._overview_update_sorted_flags()
@@ -1428,7 +1466,7 @@ class MainWindow(QMainWindow):
                 pass
         QTimer.singleShot(0, _post_build)
     
-        # Když se změní data modelu (reset/insert/sort/layout), přepočítat
+        # === Méně rušivé hooky: pouze reset/insert + změna řazení (kvůli stabilitě výběru) ===
         def _reapply():
             try:
                 self._overview_update_sorted_flags()
@@ -1439,9 +1477,8 @@ class MainWindow(QMainWindow):
         try:
             self._source_model.modelReset.connect(_reapply)
             self._source_model.rowsInserted.connect(lambda *_: _reapply())
-            self._source_model.dataChanged.connect(lambda *_: _reapply())
-            self._proxy.layoutChanged.connect(_reapply)
-            self._proxy.modelReset.connect(_reapply)
+            # Reaplikuj po změně řazení (změní se vizuální pořadí)
+            self.table.horizontalHeader().sortIndicatorChanged.connect(lambda *_: self._overview_apply_sorted_row_hiding())
         except Exception:
             pass
         
@@ -1517,39 +1554,80 @@ class MainWindow(QMainWindow):
     
     def _overview_update_sorted_flags(self) -> None:
         """
-        Do POSLEDNÍHO sloupce 'Sorted' vloží 'Yes', pokud SHA-256 zdrojového PDF
-        je obsažen v hashech PDF nalezených v 'Sorted PDFs'. Jinak prázdno.
+        Aktualizuje POSLEDNÍ sloupec 'Sorted':
+          - DisplayRole: 'Yes' / ''
+          - DecorationRole: check ikona pro 'Yes'
+          - TextAlignmentRole: center
+          - BackgroundRole: světle šedé podbarvení celé buňky ve sloupci 'Sorted'
+        Vše probíhá „safe“: bez zahlcení signály a bez rozhození výběru.
         """
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QSignalBlocker
+        from PySide6.QtWidgets import QStyle
+        from PySide6.QtGui import QBrush, QColor
     
-        fn_col = self._overview_find_col("File name")
-        sorted_col = self._overview_find_col("Sorted")
-        if fn_col is None or sorted_col is None:
+        if getattr(self, "_overview_updating_sorted", False):
             return
+        self._overview_updating_sorted = True
+        try:
+            fn_col = self._overview_find_col("File name")
+            sorted_col = self._overview_find_col("Sorted")
+            if fn_col is None or sorted_col is None:
+                return
     
-        sorted_hashes = self._collect_sorted_hashes()
+            # předpočítané hashe 'Sorted PDFs'
+            sorted_hashes = self._collect_sorted_hashes()
+            icon_ok = self.style().standardIcon(QStyle.SP_DialogApplyButton)
+            bg_brush = QBrush(QColor(240, 240, 240))  # světle šedé podbarvení
     
-        rows = self._source_model.rowCount()
-        for r in range(rows):
-            idx_fn = self._source_model.index(r, fn_col)
-            cell = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
-            mark = ""
+            # Ztiš repainty a signály výběru během hromadné aktualizace
+            blk_sel = QSignalBlocker(self.table.selectionModel())
+            blk_view = QSignalBlocker(self.table)
+            self.table.setUpdatesEnabled(False)
             try:
-                path = self._find_record_path_for_filename(cell)
-                if path:
-                    dig = self._hash_file(path)
-                    if dig and dig in sorted_hashes:
-                        mark = "Yes"
-            except Exception:
-                mark = ""
-            self._source_model.setData(self._source_model.index(r, sorted_col), mark)
+                rows = self._source_model.rowCount()
+                for r in range(rows):
+                    idx_fn = self._source_model.index(r, fn_col)
+                    fname = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
+    
+                    # spočti hash pro daný soubor → mark
+                    mark = ""
+                    try:
+                        path = self._find_record_path_for_filename(fname)
+                        if path:
+                            dig = self._hash_file(path)
+                            if dig and dig in sorted_hashes:
+                                mark = "Yes"
+                    except Exception:
+                        mark = ""
+    
+                    idx_sorted = self._source_model.index(r, sorted_col)
+                    cur_text = self._source_model.data(idx_sorted, Qt.DisplayRole) or ""
+                    # nastav pouze, když se mění – sníží se šum dataChanged
+                    if cur_text != mark:
+                        self._source_model.setData(idx_sorted, mark, Qt.DisplayRole)
+    
+                    # centrování + ikona + podbarvení
+                    self._source_model.setData(idx_sorted, Qt.AlignCenter, Qt.TextAlignmentRole)
+                    self._source_model.setData(idx_sorted, icon_ok if mark == "Yes" else None, Qt.DecorationRole)
+                    self._source_model.setData(idx_sorted, bg_brush, Qt.BackgroundRole)
+            finally:
+                self.table.setUpdatesEnabled(True)
+                del blk_sel, blk_view
+                # viewport překresli až nakonec
+                self.table.viewport().update()
+        finally:
+            self._overview_updating_sorted = False
             
     def _overview_apply_sorted_row_hiding(self) -> None:
         """
-        Skryje/ukáže řádky podle checkboxu 'Sorted'.
-        Implementováno přímo na QTableView (bez zásahu do RecordsModel).
+        Skryje/ukáže řádky podle checkboxu 'Sorted' (Yes = skrýt, když je checkbox OFF).
+        Safe varianta:
+          - blokuje signály výběru
+          - pozastaví repainty
+          - mění pouze řádky, kde se stav skutečně liší
         """
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QSignalBlocker
+        from PySide6.QtWidgets import QAbstractItemView
     
         if not hasattr(self, "table") or not hasattr(self, "_proxy"):
             return
@@ -1558,16 +1636,27 @@ class MainWindow(QMainWindow):
             return
     
         show_sorted = bool(self.chk_overview_sorted.isChecked())
-        # projdi řádky proxy modelu (zobrazené pořadí)
+    
+        # ztiš výběr a repainty na dobu skrývání
+        sel_model = self.table.selectionModel()
+        blk_sel = QSignalBlocker(sel_model)
+        blk_view = QSignalBlocker(self.table)
+        self.table.setUpdatesEnabled(False)
+    
         try:
             rows = self._proxy.rowCount()
             for r in range(rows):
                 idx = self._proxy.index(r, sorted_col)
                 val = self._proxy.data(idx, Qt.DisplayRole) or ""
-                hide = (val == "Yes") and (not show_sorted)
-                self.table.setRowHidden(r, hide)
-        except Exception:
-            pass
+                want_hide = (val == "Yes") and (not show_sorted)
+                # měň jen pokud je rozdíl
+                cur_hidden = self.table.isRowHidden(r)
+                if cur_hidden != want_hide:
+                    self.table.setRowHidden(r, want_hide)
+        finally:
+            self.table.setUpdatesEnabled(True)
+            del blk_sel, blk_view
+            self.table.viewport().update()
         
     def _on_overview_sorted_toggled(self, checked: bool) -> None:
         """
