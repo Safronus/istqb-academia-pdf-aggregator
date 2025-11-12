@@ -82,22 +82,28 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ISTQB Academia PDF Aggregator")
         self.resize(1200, 800)
         self.pdf_root = pdf_root
-
+    
         self.records: List[PdfRecord] = []
-
+        self.records_sorted: List[PdfRecord] = []  # NEW
+    
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
-
+    
         self.overview_tab = QWidget()
         self.browser_tab = QWidget()
+        self.sorted_tab = QWidget()  # NEW
+    
         self.tabs.addTab(self.overview_tab, "Overview")
         self.tabs.addTab(self.browser_tab, "PDF Browser")
-
+        self.tabs.addTab(self.sorted_tab, "Sorted PDFs")  # NEW
+    
         self._build_menu()
         self._build_overview_tab()
         self._build_browser_tab()
-
+        self._build_sorted_tab()         # NEW
+    
         self.rescan()
+        self.rescan_sorted()             # NEW – úvodní naplnění záložky Sorted PDFs
         self._init_fs_watcher()
 
     # ----- Menu / actions -----
@@ -332,6 +338,247 @@ class MainWindow(QMainWindow):
         proxy = self.table.model()
         if isinstance(proxy, RecordsModel):
             proxy.set_search(txt)
+
+    def _build_sorted_tab(self) -> None:
+        layout = QVBoxLayout()
+        controls = QHBoxLayout()
+    
+        # Board filter (shodně s Overview)
+        self.board_combo_sorted = QComboBox()
+        self.board_combo_sorted.addItem("All")
+        for b in sorted(KNOWN_BOARDS):
+            self.board_combo_sorted.addItem(b)
+        self.board_combo_sorted.currentTextChanged.connect(self._filter_board_sorted)
+    
+        # Search (shodně s Overview)
+        self.search_edit_sorted = QLineEdit()
+        self.search_edit_sorted.setPlaceholderText("Search…")
+        self.search_edit_sorted.textChanged.connect(self._filter_text_sorted)
+    
+        # Open PDF (shodně s Overview, ale cíluje tuto tabulku)
+        self.open_btn_sorted = QPushButton("Open PDF")
+        self.open_btn_sorted.clicked.connect(self.open_selected_pdf_sorted)
+    
+        controls.addWidget(QLabel("Board:"))
+        controls.addWidget(self.board_combo_sorted, 1)
+        controls.addSpacing(12)
+        controls.addWidget(QLabel("Search:"))
+        controls.addWidget(self.search_edit_sorted, 4)
+        controls.addSpacing(12)
+        controls.addWidget(self.open_btn_sorted)
+    
+        layout.addLayout(controls)
+    
+        # Tabulka (kopie nastavení z Overview)
+        self.table_sorted = QTableView()
+        self.table_sorted.setSelectionBehavior(QTableView.SelectRows)
+        self.table_sorted.setSelectionMode(QTableView.SingleSelection)
+        self.table_sorted.doubleClicked.connect(self.open_selected_pdf_sorted)
+        self.table_sorted.setSortingEnabled(True)
+        self.table_sorted.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
+        self.table_sorted.horizontalHeader().setStretchLastSection(True)
+        self.table_sorted.horizontalHeader().setMinimumHeight(44)
+    
+        layout.addWidget(self.table_sorted, 1)
+        self.sorted_tab.setLayout(layout)
+        
+    def rescan_sorted(self) -> None:
+        """
+        Naplní tabulku Sorted PDFs – čte kořen 'Sorted PDFs/' (podsložky = boardy).
+        Logika zobrazení, hlaviček, barev a ikonek je shodná s Overview::rescan().
+        """
+        from pathlib import Path
+        # --- 1) Robustní určení kořene "Sorted PDFs" ---
+        candidates = []
+        try:
+            if isinstance(getattr(self, "sorted_root", None), Path):
+                candidates.append(self.sorted_root)
+        except Exception:
+            pass
+        try:
+            if isinstance(getattr(self, "pdf_root", None), Path):
+                candidates.append(self.pdf_root.parent / "Sorted PDFs")
+        except Exception:
+            pass
+        try:
+            candidates.append(Path(__file__).resolve().parent.parent / "Sorted PDFs")
+        except Exception:
+            pass
+        try:
+            candidates.append(Path.cwd() / "Sorted PDFs")
+        except Exception:
+            pass
+    
+        chosen = None
+        for cand in candidates:
+            if isinstance(cand, Path) and cand.exists() and cand.is_dir():
+                chosen = cand
+                break
+    
+        if chosen is None:
+            # Vyprázdnit tabulku a status
+            from PySide6.QtGui import QStandardItemModel
+            empty_model = QStandardItemModel(0, 0, self)
+            proxy = RecordsModel([], self)
+            proxy.setSourceModel(empty_model)
+            self.table_sorted.setModel(proxy)
+            try:
+                self.statusBar().showMessage("Sorted PDFs: root not found.")
+            except Exception:
+                pass
+            self.records_sorted = []
+            return
+    
+        # --- 2) Sken & parsování ---
+        scanner = PdfScanner(chosen)
+        self.records_sorted = scanner.scan()
+    
+        # --- 3) Hlavičky a model (shodné s Overview) ---
+        from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor, QIcon
+        from PySide6.QtWidgets import QStyle
+    
+        headers = [
+            "Board",
+            "Application\nApplication Type",
+            "Name of Your Academic Institution\nInstitution Name",
+            "Name of Your Academic Institution\nCandidate Name",
+            "Wished Recognitions\nAcademia Recognition",
+            "Wished Recognitions\nCertified Recognition",
+            "Contact details for Information exchange\nFull Name",
+            "Contact details for Information exchange\nEmail Address",
+            "Contact details for Information exchange\nPhone Number",
+            "Contact details for Information exchange\nPostal Address",
+            "Eligibility Evidence\nSyllabi Integration",      # 10 (HIDE)
+            "Eligibility Evidence\nCourses/Modules",          # 11 (HIDE)
+            "Eligibility Evidence\nProof of ISTQB Certifications",  # 12 (HIDE)
+            "Eligibility Evidence\nUniversity Links",         # 13 (HIDE)
+            "Eligibility Evidence\nAdditional Info/Documents",# 14 (HIDE)
+            "Signature\nSignature Date",
+            "File\nFile name",
+        ]
+    
+        model = QStandardItemModel(0, len(headers), self)
+        model.setHorizontalHeaderLabels(headers)
+    
+        # Barvy skupin (stejné hex jako v Overview)
+        BRUSH_APP  = QBrush(QColor("#263238"))
+        BRUSH_INST = QBrush(QColor("#1e2a38"))
+        BRUSH_RECOG= QBrush(QColor("#1b2b34"))
+        BRUSH_CONT = QBrush(QColor("#16222a"))
+        BRUSH_ELIG = QBrush(QColor("#111a20"))
+    
+        COLS_APPLICATION = [1]
+        COLS_INSTITUTION = [2, 3]
+        COLS_RECOG       = [4, 5]
+        COLS_CONTACT     = [6, 7, 8, 9]
+        COLS_ELIG        = [10, 11, 12, 13, 14]
+    
+        style = self.style()
+        icon_yes = style.standardIcon(QStyle.SP_DialogApplyButton)
+        icon_no  = style.standardIcon(QStyle.SP_DialogCancelButton)
+    
+        def paint_group(items: list[QStandardItem], cols: list[int], brush: QBrush) -> None:
+            for c in cols:
+                if 0 <= c < len(items):
+                    items[c].setBackground(brush)
+    
+        def set_yesno_icon(item: QStandardItem) -> None:
+            val = (item.text() or "").strip().lower()
+            if val in {"yes", "on", "true", "1", "checked"}:
+                item.setIcon(icon_yes)
+            else:
+                item.setIcon(icon_no)
+    
+        for rec in self.records_sorted:
+            row_vals = rec.as_row()  # 17 prvků
+            items = [QStandardItem(v) for v in row_vals]
+            for it in items:
+                it.setEditable(False)
+    
+            paint_group(items, COLS_APPLICATION, BRUSH_APP)
+            paint_group(items, COLS_INSTITUTION, BRUSH_INST)
+            paint_group(items, COLS_RECOG,      BRUSH_RECOG)
+            paint_group(items, COLS_CONTACT,    BRUSH_CONT)
+            paint_group(items, COLS_ELIG,       BRUSH_ELIG)
+    
+            set_yesno_icon(items[4])  # Academia
+            set_yesno_icon(items[5])  # Certified
+    
+            # Skrytá plná cesta v posledním sloupci (UserRole+1)
+            FILE_COL = len(headers) - 1
+            items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
+    
+            model.appendRow(items)
+    
+        proxy = RecordsModel(headers, self)
+        proxy.setSourceModel(model)
+        self.table_sorted.setModel(proxy)
+    
+        # Defaultní skrytí Eligibility (10–14)
+        for c in (10, 11, 12, 13, 14):
+            self.table_sorted.setColumnHidden(c, True)
+    
+        # Obnova aktuálních filtrů
+        try:
+            proxy.set_board(self.board_combo_sorted.currentText())
+        except Exception:
+            pass
+        try:
+            proxy.set_search(self.search_edit_sorted.text())
+        except Exception:
+            pass
+    
+        # Stavová lišta – shrnutí
+        try:
+            # spočítat nalezené .pdf (mimo __archive__)
+            found = 0
+            for p in chosen.rglob("*.pdf"):
+                try:
+                    rel = p.relative_to(chosen)
+                    if "__archive__" in rel.parts:
+                        continue
+                    found += 1
+                except Exception:
+                    continue
+            self.statusBar().showMessage(f"Sorted PDFs found: {found} • Parsed: {len(self.records_sorted)} • Root: {str(chosen)}")
+        except Exception:
+            pass
+        
+    def _filter_board_sorted(self, txt: str) -> None:
+        proxy = self.table_sorted.model()
+        if isinstance(proxy, RecordsModel):
+            proxy.set_board(txt)
+            
+    def _filter_text_sorted(self, txt: str) -> None:
+        proxy = self.table_sorted.model()
+        if isinstance(proxy, RecordsModel):
+            proxy.set_search(txt)
+
+    def _selected_sorted_record(self) -> Optional[PdfRecord]:
+        sel = self.table_sorted.selectionModel()
+        if not sel or not sel.hasSelection():
+            return None
+        index = sel.selectedRows()[0]
+        FILE_COL = 16
+        proxy = self.table_sorted.model()
+        if isinstance(proxy, QSortFilterProxyModel):
+            sidx = proxy.mapToSource(proxy.index(index.row(), FILE_COL))
+            src = proxy.sourceModel()
+        else:
+            sidx = index
+            src = self.table_sorted.model()
+        path_str = src.index(sidx.row(), FILE_COL).data(Qt.UserRole + 1)
+        for r in self.records_sorted:
+            if str(r.path) == path_str:
+                return r
+        return None
+    
+    def open_selected_pdf_sorted(self) -> None:
+        rec = self._selected_sorted_record()
+        if not rec:
+            QMessageBox.information(self, "Open PDF", "Please select a row first.")
+            return
+        QDesktopServices.openUrl(rec.path.as_uri())
 
     # ----- Browser tab -----
     def _build_browser_tab(self) -> None:
