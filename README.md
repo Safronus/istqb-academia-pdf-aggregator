@@ -1,180 +1,189 @@
 # ISTQB Academia PDF Aggregator (PySide6)
+**Version:** 0.4 — 2025-11-12
 
-**Version:** 0.3 — 2025-11-11
-
-A macOS-oriented PySide6 GUI app (English UI) that scans a local `PDF/` folder (including subfolders) for ISTQB® Academia Recognition Program application PDFs and aggregates key fields into an overview table. A second tab provides a PDF-focused browser filtered to `.pdf` files only.
-
-> Designed for minimal dependencies, dark-theme by default, HiDPI-friendly, and safe to run on macOS.
+A macOS‑oriented **PySide6** GUI app (English UI) that scans PDF files inside the project’s **`PDF/`** folder (including subfolders named by ISTQB member boards), parses key fields from the *ISTQB Academia Recognition Program – Application Form*, and aggregates them into a tabular overview.
 
 ---
 
-## What's new in 0.2
+## Key Features
+- **Overview** tab: consolidated table of parsed fields from all PDFs under `PDF/` (subfolders = **board names**). Columns are visually grouped (Application, Institution, Wished Recognitions, Contact details, Eligibility, Signature). “Academia/Certified Recognition” show **check/close** icons for `Yes/No`.  
+- **PDF Browser** tab: file‑centric view; shows **all fields** for the selected PDF (including **Eligibility**).
+- **Sorted PDFs** tab *(if the folder exists)*: mirrors **Overview**, but scans the separate root **`Sorted PDFs/`**. Subfolders are again treated as **board names**. (Useful for manually curated classification.)
+- **Export (v0.4):** from the **Overview** tab click **Export…** to export selected data in **CSV**, **XLSX** *(optional, requires `openpyxl`)*, and/or **formatted TXT**. You can restrict export to specific boards and choose which fields to include.
+- **Board detection by folder name**: the immediate subfolder under `PDF/` or `Sorted PDFs/` is taken as the **board** (e.g., `PDF/CaSQB/...`). The app **ignores `__archive__/`** anywhere under the roots.
+- **Signature date normalization**: signature date is normalized into `YYYY-MM-DD` when possible (robust parsing of common DD/MM/YYYY, MM-DD-YYYY, etc.).
 
-- **Export** currently visible rows to **CSV** and **XLSX** (menu actions).
-- **Boards list updated**: *CaSTB* renamed to **CaSQB — Czech and Slovak Quality Board** and the known boards set was expanded.
-- README updated; `.gitignore` added to ignore `PDF/` (incl. subfolders), `.DS_Store`, caches, and typical Python artifacts.
-
----
-
-## Features
-
-- **Automatic scanning** of `PDF/` subfolder (relative to the script location), recursively.
-- **Extraction of key fields** from each PDF:
-  1. *Application Type* (New Application / Additional Recognition)
-  2. *Name of University, High-, or Technical School*
-  3. *Name of candidate*
-  4. *Recognition requested* — checkboxes (bools): Academia and Certified
-  5. *Contact details*: Full Name, Email Address, Phone Number, Postal Address
-  6. *Date* — field above signature (signature date)
-  7. *Proof of ISTQB certifications* — free text (if present)
-- **Board awareness**: Each immediate subfolder under `PDF/` is considered the ISTQB Member Board name. The app keeps an internal list of known boards and flags unknown names without blocking your workflow.
-- **English UI**, **dark theme**, responsive layout for Retina/HiDPI displays.
-- **Open PDF** action on any selected row/file.
-- **Export CSV/XLSX** of the **currently visible** rows in the Overview table.
-
-> The parser is tailored to the *ISTQB® Academia Recognition Program – Application Form* structure and uses robust heuristics to handle typical exports. You can extend `app/pdf_parser.py` if your forms differ.
+> **Note:** The app UI is English; this README is in English for consistency.
 
 ---
 
-## Requirements
-
-- Python **3.10+** (tested with 3.11)
-- macOS (works on other OSes but the target is macOS)
-- Pip packages:
-  - `PySide6`
-  - `pypdf`
-  - `openpyxl` *(for XLSX export)*
-
-Install into a virtual environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install PySide6 pypdf openpyxl
-```
-
----
-
-## Project Structure
-
+## Folder Structure
 ```
 project-root/
-├─ main.py
-├─ app/
-│  ├─ __init__.py
-│  ├─ main_window.py
-│  ├─ pdf_scanner.py
-│  ├─ pdf_parser.py
-│  ├─ istqb_boards.py
-│  └─ themes.py
-└─ PDF/                 # put your PDFs here; subfolders = ISTQB Member Boards
+  PDF/
+    CaSQB/                # Board folder (Czech and Slovak Quality Board)
+      *.pdf
+    BCS/
+      *.pdf
+    __archive__/          # Ignored by the scanner
+  Sorted PDFs/            # Optional secondary root for “Sorted PDFs” tab
+    CaSQB/
+      *.pdf
+    ...
+  app/
+    main_window.py
+    pdf_parser.py
+    pdf_scanner.py
+    istqb_boards.py
+    themes.py
+  main.py
+  README.md
+  .gitignore
 ```
-
-Create the `PDF/` folder next to `main.py` and place your PDFs inside, organized by board-specific subfolders. Example:
-
-```
-PDF/
-├─ CaSQB/
-│  └─ ISTQB Academia Recognition Program - Application Form v1.0_PetrZacek-SIG.pdf
-└─ UKITB/
-   └─ sample.pdf
-```
+- **`PDF/`** is the **default root** scanned by **Overview** and **PDF Browser**.  
+- **`Sorted PDFs/`** is **optional**; if present, **Sorted PDFs** tab scans it similarly to `PDF/`.
 
 ---
 
-## Run
+## Parsed Fields
+From the official application form the app extracts:
+1. **Application Type** (`New Application` / `Additional Recognition`, radio button)
+2. **Name of University, High-, or Technical School** (Institution name)
+3. **Name of candidate**
+4. **Wished Recognitions** (checkboxes): **Academia Recognition**, **Certified Recognition**
+5. **Contact details for information exchange**:
+   - Full Name
+   - Email Address
+   - Phone Number
+   - Postal Address
+6. **Declaration and Consent → Date** (signature date; normalized to `YYYY-MM-DD`)
+7. **Eligibility Evidence** (shown fully in **PDF Browser**, hidden in Overview by default):
+   - Description of how ISTQB syllabi are integrated in the curriculum
+   - List of courses/modules
+   - Proof of ISTQB certifications (if any)
+   - University website links (if any)
+   - Any additional relevant information or documents (if any)
+8. **File name** (file basename; full path is kept internally)
 
-From the project root:
+> The parser is resilient to minor PDF anomalies. If a particular PDF is malformed, fields may be incomplete.
+
+---
+
+## Export (v0.4)
+Open the **Overview** tab and click **Export…**. The dialog allows you to:
+- **Formats:** select one or more of **CSV**, **XLSX**, **TXT (formatted)**.  
+  - **XLSX** requires optional dependency **`openpyxl`**. If it’s not installed, CSV/TXT still export.
+- **Boards:** **All** (default) or a **custom list**. Only boards that actually contain PDFs under `PDF/` (excluding `__archive__/`) are offered.
+- **Fields:** choose which columns to export (all selected by default).
+
+After confirming, a single **Save As** dialog appears. Your chosen path (e.g., `…/export.csv`) is used as a **base**; all selected formats are saved side by side (e.g., `export.csv`, `export.xlsx`, `export.txt`).
+
+**CSV:** UTF‑8 with headers and standard separators.  
+**XLSX:** single sheet **“Export”**, bold header, basic auto‑width.  
+**TXT:** fixed‑width, header + separator + rows.
+
+---
+
+## Installation (macOS)
+Tested on macOS (Apple Silicon & Intel). Recommended **Python 3.10+**.
 
 ```bash
+# 1) Create and activate a virtualenv
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2) Install runtime deps (minimal)
+pip install --upgrade pip
+pip install PySide6
+
+# 3) (Optional) for XLSX export
+pip install openpyxl
+
+# 4) Run the app
 python main.py
 ```
 
-Optional: override the default `PDF` root via CLI arg:
-
+If you prefer module form:
 ```bash
-python main.py --pdf-root /path/to/another/folder
+python -m pip install -U PySide6
+python -m main
 ```
 
 ---
 
 ## Usage
+1. Place your PDFs into `./PDF/<BoardName>/…` (use actual ISTQB board names where possible; e.g., `CaSQB` for *Czech and Slovak Quality Board*).  
+2. Launch the app (`python main.py`).  
+3. **Overview** shows the aggregated table; **PDF Browser** shows per‑file details (including Eligibility).  
+4. *(Optional)* Use **Sorted PDFs** tab if you maintain a separate `Sorted PDFs/` tree.  
+5. Use **Export…** in **Overview** to produce CSV/XLSX/TXT for selected boards/fields.
 
-- **Overview tab**: aggregated table of all parsed PDFs. Use **Board** drop-down and **Search** box to narrow rows. Double-click a row or use **Open PDF** to open the file.
-- **PDF Browser tab**: a left-hand directory tree filtered to `.pdf` files; selecting a file shows the parsed details on the right.
-- **Export**: use the menu actions **Export CSV** or **Export XLSX** to export the **currently visible rows** in the Overview table.
-
----
-
-## Notes on ISTQB Member Boards
-
-The application ships with an initial list of well-known ISTQB Member Boards for validation hints. Board names are **not enforced**; unknown names will be allowed but shown as *Unverified*. Update `app/istqb_boards.py` to add/remove boards as needed without changing the rest of the code.  
-Changed: **CaSTB ➜ CaSQB (Czech and Slovak Quality Board)**.
-
----
-
-## Limitations & Tips
-
-- PDF text extraction depends on how the PDF was produced. The app uses `pypdf` and includes heuristics for both "typed" and "scanned" variants where text exists. Image-only scans without embedded text will not parse.
-- If a field is not detected, it appears as empty; you can still open the file from the UI to review it manually.
-- For very large folders, first run may take longer due to parsing; subsequent rescans reuse the same logic.
+### Notes
+- Subfolders named `__archive__` are ignored in all scans.
+- Some PDFs may contain broken objects; these are skipped gracefully and shown partially when possible.
+- Board detection is **by folder name**; it does **not** validate against a registry.
 
 ---
 
-## Development
-
-- Code style: PEP 8, type hints, small cohesive functions.
-- No risky operations, no shell calls.
-- Cross-platform safe paths via `pathlib`.
+## Troubleshooting
+- **A PDF shows incomplete/incorrect values:**  
+  Try opening it via **PDF Browser** to inspect all fields. If the file is malformed, you may need to correct the data externally before export.
+- **XLSX not exported:**  
+  Ensure **`openpyxl`** is installed (`pip install openpyxl`). CSV/TXT exports don’t need it.
+- **HiDPI rendering warnings:**  
+  Some Qt attributes are marked deprecated on newer Qt builds; they can be safely ignored for now.
 
 ---
 
-## Versioning
+## .gitignore (suggested)
+```
+# macOS
+.DS_Store
 
-- **0.2** — export CSV/XLSX; boards list updated (CaSQB).  
-- 0.1 — initial release with Overview and PDF Browser tabs, recursive scan, parsing of required fields, board awareness, dark theme.
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# App data
+PDF/
+Sorted PDFs/
+recognition_db.json
+
+# Editors/IDE
+.vscode/
+.idea/
+```
+
+> If you prefer to **keep PDFs in the repo**, remove `PDF/` (and `Sorted PDFs/`) from `.gitignore`.
+
+---
+
+## Create & connect a new private GitHub repo (via `gh`)
+```bash
+# Initialize local repo
+git init
+git add .
+git commit -m "feat: initial import (v0.4)"
+
+# Create a new private GitHub repo in the current directory
+gh repo create ISTQB-Academia-PDF-Aggregator --private --source=. --remote=origin --push
+
+# Tag the current version
+git tag v0.4
+git push --tags
+```
 
 ---
 
 ## Changelog
-
-### 0.2c — 2025-11-11
-- **Fix:** Read **Contact details (Section 4)** from AcroForm text fields: *Full Name*, *Email Address*, *Phone Number*, *Postal Address* (field names mapped from `Contact name`, `Contact email`, `Contact phone`, `Postal address`). Falls back to text heuristics if fields missing.
-
-
-### 0.2b — 2025-11-11
-- **Fix:** Read *Name of University, High-, or Technical School* and *Name of candidate* from **Section 2** form fields (AcroForm text fields), not from plain text heuristics.
-
-
-### 0.2a — 2025-11-11
-- **Fix:** Correctly read *Application Type* from PDF **radio buttons** (prefers AcroForm `/V` value). Prevents misclassification of "New Application" vs "Additional Recognition".
-- Clarified: Board name is derived from the **immediate subfolder** under `PDF/` that contains the file.
-
-
-### 0.2 — 2025-11-11
-- Add export of visible rows to CSV and XLSX.
-- Update ISTQB boards list (rename CaSTB → CaSQB; expand set).
-
-### 0.1 — initial
-- Overview and PDF Browser tabs.
-- Recursive scan of `PDF/` root and extraction of required fields.
-- Board awareness with known-board hinting.
-- Dark theme by default; English UI.
+- **0.4 — 2025-11-12**
+  - **Export dialog** in **Overview**: CSV/XLSX/TXT, board selection (from actual PDF folders), selectable fields, single Save As for multiple formats.
+- **0.3h — 2025‑11‑11**
+  - Baseline: Overview + PDF Browser, grouped columns, Yes/No icons for Wished Recognitions, signature date normalization, `__archive__` ignored.
+  - Optional **Sorted PDFs** tab support (reads `Sorted PDFs/` if present).
 
 ---
 
 ## License
-
-© 2025. Provided as-is. ISTQB® is a registered trademark of its respective owner.
-
-
-### 0.2d — 2025-11-11
-- **Fix:** Read **Signature Date** from Section 6 *Declaration and Consent* field (`Signature Date_af_date`) instead of generic "Date" heuristics.
-- **Feature:** Parse Section 5 *Eligibility Evidence* fields from AcroForm text fields:
-  1) *Description of how ISTQB syllabi are integrated in the curriculum* (field name: `Descriptino of how syllabi are integrated`),
-  2) *List of courses/modules* (`List of courses and modules`),
-  3) *Proof of ISTQB certifications (if any)* (`Proof of certifications`),
-  4) *University website links (if any)* (`University website links`),
-  5) *Any additional relevant information or documents (if any)* (`Additional relevant information or documents`).
-- UI detail panel shows these fields.
+This project is provided “as is” for internal usage. Add your preferred license if needed.
