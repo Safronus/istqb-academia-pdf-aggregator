@@ -371,6 +371,15 @@ class MainWindow(QMainWindow):
         # jemné vizuální zvýraznění (dark theme safe)
         self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
         self.btn_unparsed.clicked.connect(self.show_unparsed_report)
+        
+    
+        # Export button (zůstává z 0.5a)
+        self.btn_export = QToolButton(self)
+        self.btn_export.setToolTip("Export…")
+        self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
+        self.btn_export.setAutoRaise(True)
+        self.btn_export.clicked.connect(self.on_export_overview)
+        controls.addWidget(self.btn_export)
     
         self.board_combo = QComboBox()
         self.board_combo.addItem("All")
