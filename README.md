@@ -1,20 +1,21 @@
 # ISTQB Academia PDF Aggregator
 
-## Version 0.10b — 2025-11-12
-### Fix: Recognized People — candidates from Sorted DB
-- **Add dialog** now discovers candidates robustněji:
-  - prefers in-memory attrs: `self.sorted_db`, `_sorted_db`, `sorted_records`, `_sorted_records` (list/dict),
-  - can **optionally** read common JSON paths if present (e.g. `sorted_db.json`, `sorted_records.json`, `Sorted PDFs/sorted_db.json`),
-  - as a **fallback**, it can derive candidates z **Overview** tabulky (pokud není k dispozici Sorted DB).
-- Přepínač **From Sorted PDFs** zůstává dostupný; pokud jsou kandidáti nalezeni, combobox je zaplněn.
+## Version 0.10c — 2025-11-12
+### Recognized People List
+- **Add person…** now **splits multiple badges into separate records** (e.g., Academia **and** Certified -> two rows), inserted together (grouped visually).
+- **Valid Until** is **auto-computed** as *Recognition Date + 1 year* on load, add and edit.
+- **Row coloring** (applied when switching to the tab):
+  - **Green**: validity > 1 month remaining
+  - **Yellow**: ≤ 1 month remaining (still valid)
+  - **Red**: expired (after *Valid Until*)
+- **Edit…**: if you select both badges for a single-row edit, current row is updated for one badge and the **missing badge** is optionally inserted as another row (if not a duplicate).
+- Column widths keep **auto-fitting** to content.
 
 ### Notes
-- Minimal-change: bez zásahu do stávající logiky tabů.
-- Doporučení: pokud používáte vlastní strukturu/atribut Sorted DB, předejte mi prosím název/ukázku a rád doplním přesné mapování.
+- JSON persistence unchanged (`recognized_people.json`, git-ignored).
+- No changes to other tabs.
 
----
-
-## macOS quick start
+### macOS quick start
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
