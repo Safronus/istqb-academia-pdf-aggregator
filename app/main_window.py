@@ -1995,7 +1995,7 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
         
-            return sorted(boards)
+        return sorted(boards)
         
     def on_export_overview(self) -> None:
         from PySide6.QtWidgets import (
