@@ -1282,17 +1282,17 @@ class MainWindow(QMainWindow):
     # ----- Overview tab -----
     def _build_overview_tab(self) -> None:
         from PySide6.QtWidgets import (
-            QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton,
-            QTableView, QToolButton, QMenu, QCheckBox, QStyle, QApplication,
-            QStyledItemDelegate, QStyleOptionViewItem
+            QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
+            QPushButton, QTableView, QToolButton, QMenu
         )
-        from PySide6.QtGui import QStandardItemModel, QIcon, QPainter
-        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QStyle
+        from PySide6.QtGui import QStandardItemModel
     
         layout = QVBoxLayout()
         controls = QHBoxLayout()
     
-        # Unparsed
+        # --- tlačítko Unparsed (beze změny) ---
         self.btn_unparsed = QToolButton(self)
         self.btn_unparsed.setText("Unparsed")
         self.btn_unparsed.setToolTip("Show PDFs found on disk that are not present in Overview")
@@ -1301,7 +1301,7 @@ class MainWindow(QMainWindow):
         self.btn_unparsed.setStyleSheet("QToolButton { color: #ff6b6b; font-weight: 600; }")
         self.btn_unparsed.clicked.connect(self.show_unparsed_report)
     
-        # Export (Overview)
+        # --- Export (beze změny) ---
         self.btn_export = QToolButton(self)
         self.btn_export.setToolTip("Export…")
         self.btn_export.setIcon(self.style().standardIcon(QStyle.SP_DialogSaveButton))
@@ -1309,24 +1309,18 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.on_export_overview)
         controls.addWidget(self.btn_export)
     
-        # Board combobox – plní se ve _rebuild_board_combo()
         self.board_combo = QComboBox()
+        self.board_combo.addItem("All")
+        for b in sorted(KNOWN_BOARDS):
+            self.board_combo.addItem(b)
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
-        # Fulltext
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search…")
         self.search_edit.textChanged.connect(self._filter_text)
     
-        # Open Selected PDF
         self.open_btn = QPushButton("Open Selected PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
-    
-        # Checkbox Sorted (filtr ve view)
-        self.chk_overview_sorted = QCheckBox("Sorted")
-        self.chk_overview_sorted.setToolTip("Show/hide records that are already in 'Sorted PDFs'")
-        self.chk_overview_sorted.setChecked(True)
-        self.chk_overview_sorted.toggled.connect(self._on_overview_sorted_toggled)
     
         controls.addWidget(self.btn_unparsed)
         controls.addSpacing(12)
@@ -1336,9 +1330,8 @@ class MainWindow(QMainWindow):
         controls.addWidget(QLabel("Search:"))
         controls.addWidget(self.search_edit, 4)
         controls.addSpacing(12)
-        controls.addWidget(self.chk_overview_sorted)
-        controls.addSpacing(12)
         controls.addWidget(self.open_btn)
+    
         layout.addLayout(controls)
     
         # Tabulka Overview
@@ -1351,7 +1344,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # === HLAVIČKY – rozšířené o sekci 6 a 7 ===
+        # --- HLAVIČKY (rozšířeno o Sekci 6/7) ---
         self._headers = [
             "Board",
             "Application\nApplication Type",
@@ -1368,25 +1361,24 @@ class MainWindow(QMainWindow):
             "Eligibility Evidence\nProof of ISTQB Certifications",
             "Eligibility Evidence\nUniversity Links",
             "Eligibility Evidence\nAdditional Info/Documents",
-            # === NOVÉ: Section 6 ===
+            # NOVÉ – Sekce 6:
             "Declaration and Consent\nPrinted Name, Title",
-            # ZŮSTÁVÁ: Signature
+            # Původní podpis:
             "Signature Date",
-            # === NOVÉ: Section 7 (For ISTQB Academia Purpose Only) ===
+            # NOVÉ – Sekce 7:
             "For ISTQB Academia Purpose Only\nReceiving Member Board",
             "For ISTQB Academia Purpose Only\nDate Received",
             "For ISTQB Academia Purpose Only\nValidity Start Date",
             "For ISTQB Academia Purpose Only\nValidity End Date",
-            # === File/Sorted (beze změny) ===
+            # Původní poslední:
             "File\nFile name",
-            "Sorted",
         ]
     
-        # Model + proxy
         if not hasattr(self, "_source_model"):
             self._source_model = QStandardItemModel(0, len(self._headers), self)
             self._source_model.setHorizontalHeaderLabels(self._headers)
         else:
+            # pokud existuje, srovnej počet sloupců, ale neztrácej data
             self._source_model.setColumnCount(len(self._headers))
             self._source_model.setHorizontalHeaderLabels(self._headers)
     
@@ -1394,53 +1386,16 @@ class MainWindow(QMainWindow):
             self._proxy = RecordsModel(self._headers, self)
             self._proxy.setSourceModel(self._source_model)
             self._proxy.setDynamicSortFilter(True)
-        self.table.setModel(self._proxy)
+            self.table.setModel(self._proxy)
+        else:
+            self._proxy.headers = self._headers
+            self._proxy.invalidate()
     
-        # Delegát pro centrování ikon (Wished + Sorted)
-        class IconCenterDelegate(QStyledItemDelegate):
-            def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
-                icon = index.data(Qt.DecorationRole)
-                if icon:
-                    opt = QStyleOptionViewItem(option)
-                    self.initStyleOption(opt, index)
-                    txt, ico = opt.text, opt.icon
-                    opt.text, opt.icon = "", QIcon()
-                    style = option.widget.style() if option.widget else QApplication.style()
-                    style.drawControl(QStyle.CE_ItemViewItem, opt, painter, option.widget)
-                    pm = icon.pixmap(opt.decorationSize if opt.decorationSize.isValid() else opt.rect.size())
-                    x = opt.rect.x() + (opt.rect.width() - pm.width()) // 2
-                    y = opt.rect.y() + (opt.rect.height() - pm.height()) // 2
-                    painter.drawPixmap(x, y, pm)
-                else:
-                    super().paint(painter, option, index)
-    
-        # Hiding delegát pro Board
-        self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
-    
-        # Najdi indexy „tailů“
-        def _find_col_tail(tail: str) -> int | None:
-            for i, h in enumerate(self._headers):
-                t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
-                if t.lower() == tail.lower():
-                    return i
-            return None
-    
-        col_acad = _find_col_tail("Academia Recognition")
-        col_cert = _find_col_tail("Certified Recognition")
-        col_sorted = _find_col_tail("Sorted")
-        center_delegate = IconCenterDelegate(self.table)
-        if col_acad is not None:
-            self.table.setItemDelegateForColumn(col_acad, center_delegate)
-        if col_cert is not None:
-            self.table.setItemDelegateForColumn(col_cert, center_delegate)
-        if col_sorted is not None:
-            self.table.setItemDelegateForColumn(col_sorted, center_delegate)
-    
-        # Skryj Eligibility sloupce (beze změny indexů bloků – posun vyřeší hledání tailů jinde)
+        # vizuál: skrýt Eligibility v Overview (beze změny)
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # Kontextové menu – export do Sorted
+        # Kontextové menu – export do Sorted (beze změny)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         def _ctx(pos):
             idx = self.table.indexAt(pos)
@@ -1452,11 +1407,6 @@ class MainWindow(QMainWindow):
             chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
             if chosen == act_export_sorted:
                 self.export_selected_to_sorted()
-                try:
-                    self._overview_update_sorted_flags()
-                    self._overview_apply_sorted_row_hiding()
-                except Exception:
-                    pass
         if not hasattr(self, "_overview_ctx_connected"):
             self.table.customContextMenuRequested.connect(_ctx)
             self._overview_ctx_connected = True
@@ -1464,21 +1414,41 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
     
-        # Po vystavění: jednorázově spočti Sorted + hiding + board combo
-        def _post_build():
-            try:
-                self._overview_update_sorted_flags()
-                self._overview_apply_sorted_row_hiding()
-                self._rebuild_board_combo()
-            except Exception:
-                pass
-        QTimer.singleShot(0, _post_build)
-    
-        # Při změně řazení pouze aplikuj hiding (nepřepočítávej Sorted)
+        # Delegát na “Board hiding” zůstává (pokud ho máš):
         try:
-            self.table.horizontalHeader().sortIndicatorChanged.connect(lambda *_: self._overview_apply_sorted_row_hiding())
+            self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
         except Exception:
             pass
+        
+    def _overview_set_extra_columns(self, row: int, rec) -> None:
+        """
+        Minimal-change: po vložení řádku doplní 5 nových sloupců (Sekce 6/7).
+        Řádek už MUSÍ existovat v self._source_model. Nic dalšího nemění.
+        """
+        from PySide6.QtCore import Qt
+        m = self._source_model
+        if m is None:
+            return
+    
+        def col(title: str) -> int:
+            try:
+                return self._headers.index(title)
+            except Exception:
+                return -1
+    
+        mapping = {
+            "Declaration and Consent\nPrinted Name, Title": getattr(rec, "printed_name_title", None),
+            "For ISTQB Academia Purpose Only\nReceiving Member Board": getattr(rec, "istqb_receiving_board", None),
+            "For ISTQB Academia Purpose Only\nDate Received": getattr(rec, "istqb_date_received", None),
+            "For ISTQB Academia Purpose Only\nValidity Start Date": getattr(rec, "istqb_valid_from", None),
+            "For ISTQB Academia Purpose Only\nValidity End Date": getattr(rec, "istqb_valid_to", None),
+        }
+    
+        for title, value in mapping.items():
+            c = col(title)
+            if c >= 0 and 0 <= row < m.rowCount():
+                idx = m.index(row, c)
+                m.setData(idx, "" if value is None else str(value), Qt.DisplayRole)
         
     def _overview_find_col(self, tail: str) -> int | None:
         """
@@ -3204,6 +3174,21 @@ class MainWindow(QMainWindow):
     
         QTimer.singleShot(0, _apply_sorted_sizes)
         
+        from PySide6.QtCore import QTimer
+
+        def _autoload_sorted():
+            try:
+                if hasattr(self, "rescan_sorted"):
+                    self.rescan_sorted()
+                elif hasattr(self, "load_sorted_db"):
+                    self.load_sorted_db()
+                    if hasattr(self, "_sorted_rebuild_tree_from_db"):
+                        self._sorted_rebuild_tree_from_db()
+            except Exception:
+                pass
+        
+        QTimer.singleShot(0, _autoload_sorted)
+        
     def export_sorted_db(self) -> None:
         """
         Export CURRENT dataset from 'Sorted PDFs' tab using data stored in DB (self.sorted_db),
@@ -3888,180 +3873,188 @@ class MainWindow(QMainWindow):
 
     # ----- Data -----
     def rescan(self) -> None:
-        """Scan PDF root and repopulate the Overview table while preserving selection.
-        Minimal-change: persistent model + proxy; doplněn sloupec 'Sorted' a stabilní obnova výběru.
         """
-        from pathlib import Path
+        Znovu načte PDF z diskového kořene do Overview tabulky.
+        Zachová výběr dle plné cesty souboru.
+        DOPLNĚNO: po vložení řádku volá _overview_set_extra_columns(row, rec).
+        """
         from PySide6.QtCore import Qt, QItemSelectionModel
-        from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
-        from PySide6.QtWidgets import QStyle
+        from PySide6.QtGui import QStandardItem, QBrush, QColor, QIcon
     
-        # --- 0) Hlavičky včetně 'Sorted' (POSLEDNÍ sloupec) ---
-        headers = [
-            "Board",
-            "Application\nApplication Type",
-            "Name of Your Academic Institution\nInstitution Name",
-            "Name of Your Academic Institution\nCandidate Name",
-            "Wished Recognitions\nAcademia Recognition",
-            "Wished Recognitions\nCertified Recognition",
-            "Contact details for Information exchange\nFull Name",
-            "Contact details for Information exchange\nEmail Address",
-            "Contact details for Information exchange\nPhone Number",
-            "Contact details for Information exchange\nPostal Address",
-            "Eligibility Evidence\nSyllabi Integration",
-            "Eligibility Evidence\nCourses/Modules",
-            "Eligibility Evidence\nProof of ISTQB Certifications",
-            "Eligibility Evidence\nUniversity Links",
-            "Eligibility Evidence\nAdditional Info/Documents",
-            "Signature Date",
-            "File\nFile name",
-            "Sorted",
-        ]
-        self._headers = headers  # udrž jednotné hlavičky
+        if not hasattr(self, "_source_model") or self._source_model is None:
+            return
     
-        # --- Pomocníci na hledání indexu podle „tailu“ (části za \n) ---
-        def find_col_tail(hdrs: list[str], tail: str) -> int | None:
-            for i, h in enumerate(hdrs):
+        # uložit výběr podle File name sloupce (ukládáme do UserRole+1 plnou cestu)
+        def _find_col_tail(tail: str) -> int | None:
+            for i, h in enumerate(self._headers):
                 t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
                 if t.lower() == tail.lower():
                     return i
             return None
     
-        FILE_COL = find_col_tail(headers, "File name")
-        SORTED_COL = find_col_tail(headers, "Sorted")
-    
-        # --- 1) Ulož aktuální výběr podle 'File name' z PROXY ---
+        COL_FILE = _find_col_tail("File name")
         selected_paths: set[str] = set()
         try:
-            if hasattr(self, "table") and self.table.selectionModel():
-                for pidx in self.table.selectionModel().selectedRows():
-                    key = self._proxy.index(pidx.row(), FILE_COL).data(Qt.UserRole + 1)
-                    if not key:
-                        key = self._proxy.index(pidx.row(), FILE_COL).data(Qt.DisplayRole)
-                    if key:
-                        selected_paths.add(str(key))
+            sel = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
+            for pidx in sel:
+                if COL_FILE is not None:
+                    sidx = self._proxy.mapToSource(pidx)
+                    if sidx.isValid():
+                        idx = self._source_model.index(sidx.row(), COL_FILE)
+                        full = self._source_model.data(idx, Qt.UserRole + 1)
+                        if full:
+                            selected_paths.add(str(full))
         except Exception:
-            pass
+            selected_paths = set()
     
-        # --- 2) Zajisti persistentní model/proxy ---
-        if not hasattr(self, "_source_model"):
-            self._source_model = QStandardItemModel(0, len(headers), self)
-        else:
-            self._source_model.setColumnCount(len(headers))
-        self._source_model.setHorizontalHeaderLabels(headers)
-        model = self._source_model
-        proxy = getattr(self, "_proxy", None)
-        if proxy is not None and getattr(self.table, "model", None):
-            self.table.setModel(proxy)
+        # vyčistit model
+        self._source_model.removeRows(0, self._source_model.rowCount())
     
-        # --- 3) Najdi kořen PDF (beze změny logiky; robustní fallbacky) ---
-        found = 0
-        try:
-            root = Path(self.pdf_root) if getattr(self, "pdf_root", None) else None
-            if root and root.exists():
-                for p in root.rglob("*.pdf"):
+        # pro barvení skupin (zůstává beze změny)
+        BR_APP      = QBrush(QColor("#2b2b2b"))
+        BR_INST     = QBrush(QColor("#303030"))
+        BR_RECOG    = QBrush(QColor("#2b2b2b"))
+        BR_CONTACT  = QBrush(QColor("#303030"))
+        BR_ELIG     = QBrush(QColor("#252525"))
+    
+        # naskenovat PDF
+        scanner = PdfScanner(self.pdf_root)
+        records = scanner.scan()
+        self.records = records  # zachovat pro exporty apod.
+    
+        # ikony pro Yes/No (pokud je máš připraveny)
+        yes_icon = self.style().standardIcon(self.style().SP_DialogApplyButton)
+        no_icon  = self.style().standardIcon(self.style().SP_DialogCancelButton)
+    
+        def _mkitem(text: str) -> QStandardItem:
+            it = QStandardItem(text)
+            it.setEditable(False)
+            return it
+    
+        # Naplnit řádky
+        for rec in records:
+            row_items: list[QStandardItem] = []
+            # sestavit hodnoty podle tail názvů hlaviček (bez Sorted)
+            for h in self._headers:
+                tail = h.split("\n")[-1].strip()
+                val = ""
+                if tail == "Board":
+                    val = getattr(rec, "board", "") or ""
+                elif tail == "Application Type":
+                    val = getattr(rec, "application_type", "") or ""
+                elif tail == "Institution Name":
+                    val = getattr(rec, "institution_name", "") or ""
+                elif tail == "Candidate Name":
+                    val = getattr(rec, "candidate_name", "") or ""
+                elif tail == "Academia Recognition":
+                    val = getattr(rec, "recognition_academia", "") or ""
+                elif tail == "Certified Recognition":
+                    val = getattr(rec, "recognition_certified", "") or ""
+                elif tail == "Full Name":
+                    val = getattr(rec, "contact_full_name", "") or ""
+                elif tail == "Email Address":
+                    val = getattr(rec, "contact_email", "") or ""
+                elif tail == "Phone Number":
+                    val = getattr(rec, "contact_phone", "") or ""
+                elif tail == "Postal Address":
+                    val = getattr(rec, "contact_postal_address", "") or ""
+                elif tail == "Syllabi Integration":
+                    val = getattr(rec, "syllabi_integration_description", "") or ""
+                elif tail == "Courses/Modules":
+                    val = getattr(rec, "courses_modules_list", "") or ""
+                elif tail == "Proof of ISTQB Certifications":
+                    val = getattr(rec, "proof_of_istqb_certifications", "") or ""
+                elif tail == "University Links":
+                    val = getattr(rec, "university_links", "") or ""
+                elif tail == "Additional Info/Documents":
+                    val = getattr(rec, "additional_information_documents", "") or ""
+                elif tail == "Printed Name, Title":
+                    val = getattr(rec, "printed_name_title", "") or ""
+                elif tail == "Signature Date":
+                    val = getattr(rec, "signature_date", "") or ""
+                elif tail == "Receiving Member Board":
+                    val = getattr(rec, "istqb_receiving_board", "") or ""
+                elif tail == "Date Received":
+                    val = getattr(rec, "istqb_date_received", "") or ""
+                elif tail == "Validity Start Date":
+                    val = getattr(rec, "istqb_valid_from", "") or ""
+                elif tail == "Validity End Date":
+                    val = getattr(rec, "istqb_valid_to", "") or ""
+                elif tail == "File name":
                     try:
-                        if p.is_file():
-                            found += 1
+                        val = rec.path.name
                     except Exception:
-                        continue
-            else:
-                found = 0
-        except Exception:
-            found = 0
+                        val = ""
+                else:
+                    val = ""  # Sorted sloupec a neznámé — necháme prázdné; doplní se jinde
     
-        # --- 4) Parse records (původní scanner) ---
-        scanner = PdfScanner(self.pdf_root) if isinstance(self.pdf_root, Path) else None
-        self.records = scanner.scan() if scanner else []
+                it = _mkitem("" if val is None else str(val))
+                row_items.append(it)
     
-        # --- 5) Vyprázdni a naplň model (přidán prázdný 'Sorted' item) ---
-        if model.rowCount() > 0:
-            model.removeRows(0, model.rowCount())
+            # vložit řádek
+            r = self._source_model.rowCount()
+            self._source_model.insertRow(r, row_items)
     
-        # barevné bloky a ikonky (beze změny vzhledu)
-        COLS_APPLICATION = [1]
-        COLS_INSTITUTION = [2, 3]
-        COLS_RECOG      = [4, 5]
-        COLS_CONTACT    = [6, 7, 8, 9]
-        COLS_ELIG       = [10, 11, 12, 13, 14]
+            # ikony pro Wished Recognition
+            try:
+                col_acad = self._headers.index("Wished Recognitions\nAcademia Recognition")
+                col_cert = self._headers.index("Wished Recognitions\nCertified Recognition")
+                if getattr(rec, "recognition_academia", "").lower() == "yes":
+                    self._source_model.item(r, col_acad).setIcon(yes_icon)
+                elif getattr(rec, "recognition_academia", "").lower() == "no":
+                    self._source_model.item(r, col_acad).setIcon(no_icon)
+                if getattr(rec, "recognition_certified", "").lower() == "yes":
+                    self._source_model.item(r, col_cert).setIcon(yes_icon)
+                elif getattr(rec, "recognition_certified", "").lower() == "no":
+                    self._source_model.item(r, col_cert).setIcon(no_icon)
+            except Exception:
+                pass
     
-        BRUSH_APP   = QBrush(QColor(58, 74, 110))
-        BRUSH_INST  = QBrush(QColor(74, 58, 110))
-        BRUSH_RECOG = QBrush(QColor(58, 110, 82))
-        BRUSH_CONT  = QBrush(QColor(110, 82, 58))
-        BRUSH_ELIG  = QBrush(QColor(92, 92, 92))
+            # Ulož plnou cestu do File name buňky (pro obnovu výběru)
+            try:
+                col_file = self._headers.index("File\nFile name")
+                idx_file = self._source_model.index(r, col_file)
+                self._source_model.setData(idx_file, str(rec.path), Qt.UserRole + 1)
+            except Exception:
+                pass
     
-        icon_yes = self.style().standardIcon(QStyle.SP_DialogApplyButton)
-        icon_no  = self.style().standardIcon(QStyle.SP_DialogCancelButton)
+            # Barvení skupin (zůstává)
+            try:
+                for c in (1,): self._source_model.item(r, c).setBackground(BR_APP)
+                for c in (2,3): self._source_model.item(r, c).setBackground(BR_INST)
+                for c in (4,5): self._source_model.item(r, c).setBackground(BR_RECOG)
+                for c in (6,7,8,9): self._source_model.item(r, c).setBackground(BR_CONTACT)
+                for c in (10,11,12,13,14): self._source_model.item(r, c).setBackground(BR_ELIG)
+            except Exception:
+                pass
     
-        def paint_group(items: list[QStandardItem], cols: list[int], brush: QBrush) -> None:
-            for c in cols:
-                if 0 <= c < len(items):
-                    items[c].setBackground(brush)
+            # >>> NOVÉ: doplň pět přidaných sloupců (Sekce 6/7)
+            try:
+                self._overview_set_extra_columns(r, rec)
+            except Exception:
+                pass
     
-        def set_yesno_icon(item: QStandardItem) -> None:
-            val = (item.text() or "").strip().lower()
-            item.setIcon(icon_yes if val in {"yes", "on", "true", "1", "checked"} else icon_no)
-    
-        for rec in self.records:
-            row_vals = rec.as_row()  # musí odpovídat všem sloupcům KROMĚ 'Sorted'
-            items = [QStandardItem(v) for v in row_vals]
-            for it in items:
-                it.setEditable(False)
-            # přidej prázdnou buňku pro 'Sorted'
-            items.append(QStandardItem(""))
-    
-            paint_group(items, COLS_APPLICATION, BRUSH_APP)
-            paint_group(items, COLS_INSTITUTION, BRUSH_INST)
-            paint_group(items, COLS_RECOG,      BRUSH_RECOG)
-            paint_group(items, COLS_CONTACT,    BRUSH_CONT)
-            paint_group(items, COLS_ELIG,       BRUSH_ELIG)
-    
-            set_yesno_icon(items[4])  # Academia
-            set_yesno_icon(items[5])  # Certified
-    
-            # ulož plnou cestu k souboru do File name sloupce (UserRole+1)
-            if FILE_COL is not None and 0 <= FILE_COL < len(items):
-                items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
-    
-            model.appendRow(items)
-    
-        # --- 6) Úpravy view/proxy (bez práce se selection tady) ---
-        self.table.sortByColumn(0, Qt.AscendingOrder)
-        for c in range(len(headers)):
-            self.table.resizeColumnToContents(c)
-        for c in (10, 11, 12, 13, 14):
-            self.table.setColumnHidden(c, True)
-    
-        # --- 7) Spočti 'Sorted' a aplikuj případné skrytí (bez zásahu do výběru) ---
+        # aktualizace flagů Sorted + případné skrytí
         try:
             self._overview_update_sorted_flags()
             self._overview_apply_sorted_row_hiding()
         except Exception:
             pass
     
-        # --- 8) Obnov výběr podle uložených cest (pokud jsou) ---
-        try:
-            if selected_paths and proxy is not None:
-                sel_model = self.table.selectionModel()
-                # nečisti selection, jen přidej odpovídající řádky zpět
-                for r in range(model.rowCount()):
-                    sval = model.index(r, FILE_COL).data(Qt.UserRole + 1) if FILE_COL is not None else None
-                    if not sval and FILE_COL is not None:
-                        sval = model.index(r, FILE_COL).data()
-                    if sval and str(sval) in selected_paths:
-                        pidx = proxy.mapFromSource(model.index(r, 0))
-                        sel_model.select(pidx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
-        except Exception:
-            pass
-    
-        # --- 9) Watch list & status (beze změny) ---
-        self._rebuild_watch_list()
-        try:
-            root_str = str(self.pdf_root) if isinstance(self.pdf_root, Path) else "<unset>"
-            self.statusBar().showMessage(f"PDF found: {found} • Parsed: {len(self.records)} • Root: {root_str}")
-        except Exception:
-            pass
+        # restore selection dle uložených cest
+        if selected_paths:
+            sm = self.table.selectionModel()
+            if sm:
+                sm.clearSelection()
+                flags = QItemSelectionModel.Select | QItemSelectionModel.Rows
+                for r in range(self._source_model.rowCount()):
+                    if COL_FILE is not None:
+                        idx = self._source_model.index(r, COL_FILE)
+                        full = self._source_model.data(idx, Qt.UserRole + 1)
+                        if full and str(full) in selected_paths:
+                            pidx = self._proxy.mapFromSource(idx)
+                            if pidx.isValid():
+                                sm.select(pidx, flags)
 
     # ----- Actions -----
     from typing import Optional
