@@ -28,6 +28,12 @@ class PdfRecord:
     university_links: Optional[str]
     additional_information_documents: Optional[str]
     board_known: bool
+    # NOVÉ – sekce 6 a 7:
+    printed_name_title: Optional[str] = None
+    istqb_receiving_board: Optional[str] = None
+    istqb_date_received: Optional[str] = None
+    istqb_valid_from: Optional[str] = None
+    istqb_valid_to: Optional[str] = None
 
     def as_row(self) -> List[str]:
         return [
