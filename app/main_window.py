@@ -1309,7 +1309,7 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self.on_export_overview)
         controls.addWidget(self.btn_export)
     
-        # Board combobox – model naplníme ve _rebuild_board_combo()
+        # Board combobox – plní se ve _rebuild_board_combo()
         self.board_combo = QComboBox()
         self.board_combo.currentTextChanged.connect(self._filter_board)
     
@@ -1328,7 +1328,6 @@ class MainWindow(QMainWindow):
         self.chk_overview_sorted.setChecked(True)
         self.chk_overview_sorted.toggled.connect(self._on_overview_sorted_toggled)
     
-        # Controls layout
         controls.addWidget(self.btn_unparsed)
         controls.addSpacing(12)
         controls.addWidget(QLabel("Board:"))
@@ -1352,7 +1351,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setMinimumHeight(44)
     
-        # Hlavičky – poslední sloupec Sorted
+        # === HLAVIČKY – rozšířené o sekci 6 a 7 ===
         self._headers = [
             "Board",
             "Application\nApplication Type",
@@ -1369,7 +1368,16 @@ class MainWindow(QMainWindow):
             "Eligibility Evidence\nProof of ISTQB Certifications",
             "Eligibility Evidence\nUniversity Links",
             "Eligibility Evidence\nAdditional Info/Documents",
+            # === NOVÉ: Section 6 ===
+            "Declaration and Consent\nPrinted Name, Title",
+            # ZŮSTÁVÁ: Signature
             "Signature Date",
+            # === NOVÉ: Section 7 (For ISTQB Academia Purpose Only) ===
+            "For ISTQB Academia Purpose Only\nReceiving Member Board",
+            "For ISTQB Academia Purpose Only\nDate Received",
+            "For ISTQB Academia Purpose Only\nValidity Start Date",
+            "For ISTQB Academia Purpose Only\nValidity End Date",
+            # === File/Sorted (beze změny) ===
             "File\nFile name",
             "Sorted",
         ]
@@ -1388,7 +1396,7 @@ class MainWindow(QMainWindow):
             self._proxy.setDynamicSortFilter(True)
         self.table.setModel(self._proxy)
     
-        # Delegát pro centrování ikon
+        # Delegát pro centrování ikon (Wished + Sorted)
         class IconCenterDelegate(QStyledItemDelegate):
             def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
                 icon = index.data(Qt.DecorationRole)
@@ -1409,7 +1417,7 @@ class MainWindow(QMainWindow):
         # Hiding delegát pro Board
         self.table.setItemDelegateForColumn(0, BoardHidingDelegate(self.table))
     
-        # Najdi indexy sloupců
+        # Najdi indexy „tailů“
         def _find_col_tail(tail: str) -> int | None:
             for i, h in enumerate(self._headers):
                 t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
@@ -1428,11 +1436,11 @@ class MainWindow(QMainWindow):
         if col_sorted is not None:
             self.table.setItemDelegateForColumn(col_sorted, center_delegate)
     
-        # Skryj Eligibility sloupce
+        # Skryj Eligibility sloupce (beze změny indexů bloků – posun vyřeší hledání tailů jinde)
         for c in (10, 11, 12, 13, 14):
             self.table.setColumnHidden(c, True)
     
-        # Kontextové menu – export do Sorted (po exportu jednorázově zreviduj Sorted sloupec)
+        # Kontextové menu – export do Sorted
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         def _ctx(pos):
             idx = self.table.indexAt(pos)
@@ -1444,7 +1452,6 @@ class MainWindow(QMainWindow):
             chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
             if chosen == act_export_sorted:
                 self.export_selected_to_sorted()
-                # minimální doplněk: po exportu přepočti Sorted + aplikuj hiding (tiché, bez zásahu do výběru)
                 try:
                     self._overview_update_sorted_flags()
                     self._overview_apply_sorted_row_hiding()
@@ -1457,10 +1464,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table, 1)
         self.overview_tab.setLayout(layout)
     
-        # Po vystavění: jednorázově spočti Sorted a rebuildni Board combobox
+        # Po vystavění: jednorázově spočti Sorted + hiding + board combo
         def _post_build():
             try:
-                self._overview_update_sorted_flags()   # jen jednou
+                self._overview_update_sorted_flags()
                 self._overview_apply_sorted_row_hiding()
                 self._rebuild_board_combo()
             except Exception:
@@ -1981,27 +1988,26 @@ class MainWindow(QMainWindow):
                 pass
     
         if not boards:
-            try:
-                for r in getattr(self, "records", []):
-                    if getattr(r, "board", None):
-                        boards.add(r.board)
-            except Exception:
-                pass
-    
-        return sorted(boards)
-    
+                try:
+                    for r in getattr(self, "records", []):
+                        if getattr(r, "board", None):
+                            boards.add(r.board)
+                except Exception:
+                    pass
+        
+            return sorted(boards)
+        
     def on_export_overview(self) -> None:
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QCheckBox, QLabel,
             QComboBox, QPushButton, QListWidget, QListWidgetItem, QScrollArea,
-            QWidget, QGridLayout, QDialogButtonBox, QFileDialog, QMessageBox, QRadioButton
+            QWidget, QGridLayout, QDialogButtonBox, QFileDialog, QMessageBox
         )
         from PySide6.QtCore import Qt
         from datetime import datetime
         import os
     
         # --- definice polí (label -> klíč v rec) ---
-        # soulad s Overview pořadím
         FIELDS: list[tuple[str, str]] = [
             ("Board", "board"),
             ("Application Type", "application_type"),
@@ -2013,50 +2019,221 @@ class MainWindow(QMainWindow):
             ("Email Address", "contact_email"),
             ("Phone Number", "contact_phone"),
             ("Postal Address", "contact_postal_address"),
-            # Eligibility (v Overview skryté, ale exportovatelně dostupné)
             ("Syllabi Integration", "syllabi_integration_description"),
             ("Courses/Modules", "courses_modules_list"),
             ("Proof of ISTQB Certifications", "proof_of_istqb_certifications"),
             ("University Links", "university_links"),
             ("Additional Info/Documents", "additional_information_documents"),
+            # === NOVÉ (sekce 6) – před Signature Date ===
+            ("Printed Name, Title", "printed_name_title"),
+            # PŮVODNÍ:
             ("Signature Date", "signature_date"),
+            # === NOVÉ (sekce 7) – skupina "For ISTQB Academia Purpose Only" ===
+            ("For ISTQB Academia Purpose Only – Receiving Member Board", "istqb_receiving_board"),
+            ("For ISTQB Academia Purpose Only – Date Received", "istqb_date_received"),
+            ("For ISTQB Academia Purpose Only – Validity Start Date", "istqb_valid_from"),
+            ("For ISTQB Academia Purpose Only – Validity End Date", "istqb_valid_to"),
             ("File name", "file_name"),
         ]
     
-        # --- pomocné: zjisti počet vybraných řádků + sadu vybraných názvů souborů z tabulky ---
-        selected_count = 0
-        selected_file_names: set[str] = set()
-        try:
-            view = getattr(self, "table", None)
-            model = view.model() if view else None
-            selm = view.selectionModel() if view else None
+        # --- dialog (beze změny UI logiky) ---
+        class ExportDialog(QDialog):
+            def __init__(self, boards_avail: list[str], parent=None):
+                super().__init__(parent)
+                self.setWindowTitle("Export options")
+                main = QVBoxLayout(self)
     
-            # najdi index sloupce "File name" z self._headers (poslední řádek popisku po \n)
-            col_file = None
+                grp_fmt = QGroupBox("Export formats")
+                fmt_lay = QHBoxLayout(grp_fmt)
+                self.chk_csv = QCheckBox("CSV")
+                self.chk_xlsx = QCheckBox("XLSX")
+                self.chk_txt = QCheckBox("TXT (formatted)")
+                self.chk_csv.setChecked(True)
+                self.chk_txt.setChecked(True)
+                self.chk_xlsx.setChecked(False)
+                fmt_lay.addWidget(self.chk_csv)
+                fmt_lay.addWidget(self.chk_xlsx)
+                fmt_lay.addWidget(self.chk_txt)
+                main.addWidget(grp_fmt)
+    
+                grp_b = QGroupBox("Boards to export")
+                b_lay = QGridLayout(grp_b)
+                self.all_boards = QCheckBox("All")
+                self.all_boards.setChecked(True)
+                b_lay.addWidget(self.all_boards, 0, 0, 1, 2)
+    
+                self.cmb_board = QComboBox()
+                self.cmb_board.addItems(boards_avail)
+                self.btn_add = QPushButton("Add")
+                b_lay.addWidget(QLabel("Board:"), 1, 0)
+                b_lay.addWidget(self.cmb_board, 1, 1)
+                b_lay.addWidget(self.btn_add, 1, 2)
+    
+                self.list_sel = QListWidget()
+                b_lay.addWidget(QLabel("Selected boards:"), 2, 0, 1, 3)
+                b_lay.addWidget(self.list_sel, 3, 0, 1, 3)
+                self.btn_remove = QPushButton("Remove selected")
+                b_lay.addWidget(self.btn_remove, 4, 0, 1, 3)
+    
+                def _toggle_board_ui():
+                    enabled = not self.all_boards.isChecked()
+                    self.cmb_board.setEnabled(enabled)
+                    self.btn_add.setEnabled(enabled)
+                    self.list_sel.setEnabled(enabled)
+                    self.btn_remove.setEnabled(enabled)
+    
+                self.all_boards.toggled.connect(_toggle_board_ui)
+                self.btn_add.clicked.connect(lambda: self._add_board())
+                self.btn_remove.clicked.connect(lambda: self._remove_sel())
+                _toggle_board_ui()
+                main.addWidget(grp_b)
+    
+                grp_fields = QGroupBox("Fields to export")
+                f_lay = QVBoxLayout(grp_fields)
+                self.chk_all_fields = QCheckBox("Select all")
+                self.chk_all_fields.setChecked(True)
+                f_lay.addWidget(self.chk_all_fields)
+    
+                self.scroll = QScrollArea()
+                self.scroll.setWidgetResizable(True)
+                cont = QWidget()
+                cont_lay = QVBoxLayout(cont)
+                self.field_checks: list[tuple[str, str, QCheckBox]] = []
+                for label, key in FIELDS:
+                    cb = QCheckBox(label)
+                    cb.setChecked(True)
+                    self.field_checks.append((label, key, cb))
+                    cont_lay.addWidget(cb)
+                cont_lay.addStretch(1)
+                self.scroll.setWidget(cont)
+                f_lay.addWidget(self.scroll)
+    
+                def _toggle_all():
+                    state = self.chk_all_fields.isChecked()
+                    for _, _, cb in self.field_checks:
+                        cb.setChecked(state)
+                self.chk_all_fields.toggled.connect(_toggle_all)
+                main.addWidget(grp_fields)
+    
+                btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+                main.addWidget(btns)
+                btns.accepted.connect(self._accept)
+                btns.rejected.connect(self.reject)
+    
+                self.result = None
+    
+            def _add_board(self):
+                txt = self.cmb_board.currentText().strip()
+                if not txt:
+                    return
+                for i in range(self.list_sel.count()):
+                    if self.list_sel.item(i).text() == txt:
+                        return
+                self.list_sel.addItem(QListWidgetItem(txt))
+    
+            def _remove_sel(self):
+                for it in self.list_sel.selectedItems():
+                    self.list_sel.takeItem(self.list_sel.row(it))
+    
+            def _accept(self):
+                fmts = []
+                if self.chk_csv.isChecked(): fmts.append("csv")
+                if self.chk_xlsx.isChecked(): fmts.append("xlsx")
+                if self.chk_txt.isChecked(): fmts.append("txt")
+                if not fmts:
+                    QMessageBox.warning(self, "Export", "Select at least one format.")
+                    return
+                boards = None
+                if not self.all_boards.isChecked():
+                    boards = []
+                    for i in range(self.list_sel.count()):
+                        boards.append(self.list_sel.item(i).text())
+                    if not boards:
+                        QMessageBox.warning(self, "Export", "Add at least one board or check 'All'.")
+                        return
+                fields = [(lab, key) for (lab, key, cb) in self.field_checks if cb.isChecked()]
+                if not fields:
+                    QMessageBox.warning(self, "Export", "Select at least one field.")
+                    return
+                self.result = {"formats": fmts, "boards": boards, "fields": fields}
+                self.accept()
+    
+        boards_avail = self._collect_available_boards()
+        dlg = ExportDialog(boards_avail, self)
+        if dlg.exec_() != QDialog.Accepted or dlg.result is None:
+            return
+    
+        formats: list[str] = dlg.result["formats"]
+        boards_sel: list[str] | None = dlg.result["boards"]
+        fields: list[tuple[str, str]] = dlg.result["fields"]
+    
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        suffix = "all" if boards_sel is None else ("+".join(boards_sel[:3]) + ("+more" if boards_sel and len(boards_sel) > 3 else ""))
+        base_name = f"export-{suffix}-{ts}".replace(" ", "_")
+        first_ext = formats[0]
+        default_name = f"{base_name}.{first_ext}"
+    
+        path, _ = QFileDialog.getSaveFileName(self, "Save export as…", default_name, "All files (*.*)")
+        if not path:
+            return
+        base_no_ext, _sep, _ext = path.rpartition(".")
+        if not base_no_ext:
+            base_no_ext = path
+    
+        records = list(getattr(self, "records", []))
+        if boards_sel is not None:
+            wh = set(boards_sel)
+            records = [r for r in records if (getattr(r, "board", None) in wh)]
+    
+        rows: list[list[str]] = []
+        headers = [lab for (lab, _key) in fields]
+    
+        def _get_val(rec, key: str) -> str:
+            if key == "file_name":
+                try:
+                    return rec.path.name if getattr(rec, "path", None) else ""
+                except Exception:
+                    return ""
+            v = getattr(rec, key, None)
+            return "" if v is None else str(v)
+    
+        for rec in records:
+            rows.append([_get_val(rec, key) for (_lab, key) in fields])
+    
+        ok, errs = [], []
+        if "csv" in formats:
             try:
-                for i, h in enumerate(getattr(self, "_headers", [])):
-                    lbl = h.split("\n")[-1].strip() if "\n" in h else h.strip()
-                    if lbl.lower() == "file name":
-                        col_file = i
-                        break
-                if col_file is None:
-                    # fallback: první sloupec obsahující "File"
-                    for i, h in enumerate(getattr(self, "_headers", [])):
-                        if "File" in h:
-                            col_file = i
-                            break
-            except Exception:
-                col_file = None
+                fn = base_no_ext + ".csv"
+                self._export_to_csv(fn, headers, rows)
+                ok.append(fn)
+            except Exception as e:
+                errs.append(f"CSV: {e}")
+        if "txt" in formats:
+            try:
+                fn = base_no_ext + ".txt"
+                self._export_to_txt(fn, headers, rows)
+                ok.append(fn)
+            except Exception as e:
+                errs.append(f"TXT: {e}")
+        if "xlsx" in formats:
+            try:
+                fn = base_no_ext + ".xlsx"
+                self._export_to_xlsx(fn, headers, rows)
+                ok.append(fn)
+            except ImportError:
+                errs.append("XLSX: optional dependency 'openpyxl' not installed.")
+            except Exception as e:
+                errs.append(f"XLSX: {e}")
     
-            if view and model and selm and col_file is not None:
-                for idx in selm.selectedRows(col_file):
-                    val = model.data(idx, Qt.DisplayRole)
-                    if val:
-                        selected_file_names.add(str(val))
-            selected_count = len(selected_file_names)
+        msg = []
+        if ok:   msg.append("Exported:\n- " + "\n- ".join(ok))
+        if errs: msg.append("\nIssues:\n- " + "\n- ".join(errs))
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Export", "\n".join(msg))
+        try:
+            self.statusBar().showMessage("Export done.")
         except Exception:
-            selected_count = 0
-            selected_file_names = set()
+            pass
     
         # --- dialog ---
         class ExportDialog(QDialog):
@@ -2873,75 +3050,65 @@ class MainWindow(QMainWindow):
 
     def _build_sorted_tab(self) -> None:
         """
-        UI pro záložku 'Sorted PDFs': vlevo strom Board -> PDF, vpravo detailní formulář.
-        Minimal-change:
-          - větší levý panel (Board / PDF),
-          - větší editační pole (QLineEdit vyšší, QPlainTextEdit vyšší),
-          - form layout dovolí růst polí (AllNonFixedFieldsGrow),
-          - zachováno tlačítko 'Export…' (volá export_sorted_db()).
+        UI pro záložku 'Sorted PDFs': strom vlevo, vpravo formulář s poli – rozšířeno o:
+          - printed_name_title
+          - istqb_receiving_board, istqb_date_received, istqb_valid_from, istqb_valid_to
         """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
-            QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy
+            QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton
         )
         from PySide6.QtCore import Qt, QTimer
     
         layout = QVBoxLayout()
-    
-        # Hlavní splitter: vlevo strom, vpravo formulář
         self.split_sorted = QSplitter(self.sorted_tab)
         self.split_sorted.setOrientation(Qt.Horizontal)
     
-        # ===== LEVÁ STRANA: strom se soubory =====
+        # LEVÁ strana
         self.tree_sorted = QTreeWidget()
         self.tree_sorted.setHeaderLabels(["Board / PDF"])
         self.tree_sorted.itemSelectionChanged.connect(self._sorted_on_item_changed)
     
-        # ===== PRAVÁ STRANA: detailní formulář =====
+        # PRAVÁ strana
         right = QWidget()
         right_layout = QVBoxLayout(right)
-    
         self.form_sorted = QFormLayout()
         self.form_sorted.setFormAlignment(Qt.AlignTop)
         self.form_sorted.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
-        # dovol růst polí do šířky i výšky, kde to dává smysl
-        self.form_sorted.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     
-        def _line() -> QLineEdit:
-            le = QLineEdit()
-            le.setMinimumHeight(36)  # vyšší editace
-            le.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            return le
+        # Single-line fields
+        self.ed_board = QLineEdit()
+        self.ed_app_type = QLineEdit()
+        self.ed_inst_name = QLineEdit()
+        self.ed_cand_name = QLineEdit()
+        self.ed_rec_acad = QLineEdit()
+        self.ed_rec_cert = QLineEdit()
+        self.ed_fullname = QLineEdit()
+        self.ed_email = QLineEdit()
+        self.ed_phone = QLineEdit()
+        self.ed_sigdate = QLineEdit()
+        self.ed_filename = QLineEdit()
     
-        # Jednořádková pole (názvy podle toho, co používají ostatní metody)
-        self.ed_board = _line()
-        self.ed_app_type = _line()
-        self.ed_inst_name = _line()    # očekáváno ve zbytku kódu
-        self.ed_cand_name = _line()    # očekáváno ve zbytku kódu
-        self.ed_rec_acad = _line()     # očekáváno (alias k dřívějšímu ed_acad)
-        self.ed_rec_cert = _line()     # očekáváno (alias k dřívějšímu ed_cert)
-        self.ed_fullname = _line()
-        self.ed_email = _line()
-        self.ed_phone = _line()
-        self.ed_sigdate = _line()      # očekáváno _sorted_set_editable
-        self.ed_filename = _line()
+        # NOVÉ – single-line
+        self.ed_printed = QLineEdit()             # Printed Name, Title
+        self.ed_istqb_board = QLineEdit()         # Receiving Member Board
+        self.ed_istqb_received = QLineEdit()      # Date Received
+        self.ed_istqb_valid_from = QLineEdit()    # Validity Start Date
+        self.ed_istqb_valid_to = QLineEdit()      # Validity End Date
     
-        # Víceřádková pole – výrazně větší (více se vejde bez scrollu)
-        def _pte() -> QPlainTextEdit:
-            p = QPlainTextEdit()
-            p.setMinimumHeight(96)
-            p.setMaximumHeight(220)
-            p.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            return p
+        # Multi-line
+        self.ed_address = QPlainTextEdit()
+        self.ed_syllabi = QPlainTextEdit()
+        self.ed_courses = QPlainTextEdit()
+        self.ed_proof = QPlainTextEdit()
+        self.ed_links = QPlainTextEdit()
+        self.ed_additional = QPlainTextEdit()
+        for pte in (self.ed_address, self.ed_syllabi, self.ed_courses,
+                    self.ed_proof, self.ed_links, self.ed_additional):
+            pte.setMinimumHeight(56)
+            pte.setMaximumHeight(120)
     
-        self.ed_address = _pte()
-        self.ed_syllabi = _pte()
-        self.ed_courses = _pte()
-        self.ed_proof = _pte()
-        self.ed_links = _pte()
-        self.ed_additional = _pte()
-    
-        # ---- Kompatibilní aliasy (jen jmenné mosty) ----
+        # Aliasy (kompatibilita)
         self.ed_inst = self.ed_inst_name
         self.ed_cand = self.ed_cand_name
         self.ed_acad = self.ed_rec_acad
@@ -2957,7 +3124,14 @@ class MainWindow(QMainWindow):
         self.ed_university_links = self.ed_links
         self.ed_additional_information_documents = self.ed_additional
     
-        # Sestavení formuláře – popisky zarovnány s Overview
+        # NOVÉ aliasy
+        self.ed_printed_name_title = self.ed_printed
+        self.ed_istqb_receiving_board = self.ed_istqb_board
+        self.ed_istqb_date_received = self.ed_istqb_received
+        self.ed_istqb_valid_from = self.ed_istqb_valid_from
+        self.ed_istqb_valid_to = self.ed_istqb_valid_to
+    
+        # Sestavení formuláře (pořadí zarovnáno s Overview)
         self.form_sorted.addRow("Board:", self.ed_board)
         self.form_sorted.addRow("Application Type:", self.ed_app_type)
         self.form_sorted.addRow("Institution Name:", self.ed_inst_name)
@@ -2973,12 +3147,19 @@ class MainWindow(QMainWindow):
         self.form_sorted.addRow("Proof of ISTQB Certifications:", self.ed_proof)
         self.form_sorted.addRow("University Links:", self.ed_links)
         self.form_sorted.addRow("Additional Info/Documents:", self.ed_additional)
+    
+        # NOVÉ
+        self.form_sorted.addRow("Printed Name, Title:", self.ed_printed)
         self.form_sorted.addRow("Signature Date:", self.ed_sigdate)
+        self.form_sorted.addRow("For ISTQB Academia Purpose Only – Receiving Member Board:", self.ed_istqb_board)
+        self.form_sorted.addRow("For ISTQB Academia Purpose Only – Date Received:", self.ed_istqb_received)
+        self.form_sorted.addRow("For ISTQB Academia Purpose Only – Validity Start Date:", self.ed_istqb_valid_from)
+        self.form_sorted.addRow("For ISTQB Academia Purpose Only – Validity End Date:", self.ed_istqb_valid_to)
+    
         self.form_sorted.addRow("File name:", self.ed_filename)
     
         right_layout.addLayout(self.form_sorted)
     
-        # Řádek tlačítek (včetně Export…)
         btn_row = QHBoxLayout()
         self.btn_sorted_edit = QPushButton("Edit")
         self.btn_sorted_save = QPushButton("Save to DB")
@@ -2992,43 +3173,36 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(self.btn_sorted_rescan)
         right_layout.addLayout(btn_row)
     
-        # Vazby tlačítek – žádné přejmenování stávajících metod
         self.btn_sorted_edit.clicked.connect(lambda: self._sorted_set_editable(True))
         self.btn_sorted_save.clicked.connect(self._sorted_save_changes)
         self.btn_sorted_export.clicked.connect(self.export_sorted_db)
         self.btn_sorted_rescan.clicked.connect(self.rescan_sorted)
     
-        # Výchozí – read-only pole; přepíná se tlačítkem Edit
         self._sorted_set_editable(False)
     
-        # Osazení splitteru a layoutu
         self.split_sorted.addWidget(self.tree_sorted)
         self.split_sorted.addWidget(right)
-        # Zvýhodni levý panel – strom (větší Board / PDF)
-        self.split_sorted.setStretchFactor(0, 2)
-        self.split_sorted.setStretchFactor(1, 1)
+        self.split_sorted.setStretchFactor(0, 1)
+        self.split_sorted.setStretchFactor(1, 2)
     
         layout.addWidget(self.split_sorted, 1)
         self.sorted_tab.setLayout(layout)
     
-        # Jemné sizing doladění po vystavění UI
-        def _apply_sorted_sizes_local():
+        def _apply_sorted_sizes():
             try:
-                # autosize sloupce stromu + malá rezerva
-                self.tree_sorted.resizeColumnToContents(0)
-                extra = 80
-                curr = self.tree_sorted.columnWidth(0)
-                if curr > 0:
-                    self.tree_sorted.setColumnWidth(0, curr + extra)
+                rec_w, rec_h = 1200, 820
+                if self.width() < rec_w or self.height() < rec_h:
+                    self.resize(max(self.width(), rec_w), max(self.height(), rec_h))
             except Exception:
                 pass
             try:
-                total_w = max(self.width(), 1400)
-                self.split_sorted.setSizes([int(total_w * 0.65), int(total_w * 0.35)])
+                self.tree_sorted.resizeColumnToContents(0)
+                total_w = max(self.width(), 1200)
+                self.split_sorted.setSizes([int(total_w * 0.48), int(total_w * 0.52)])
             except Exception:
                 pass
     
-        QTimer.singleShot(0, _apply_sorted_sizes_local)
+        QTimer.singleShot(0, _apply_sorted_sizes)
         
     def export_sorted_db(self) -> None:
         """
@@ -3358,17 +3532,44 @@ class MainWindow(QMainWindow):
         return self.sorted_db.key_for(abs_path)
     
     def _sorted_on_item_changed(self) -> None:
-        sel = self.tree_sorted.selectedItems()
-        if not sel:
+        """
+        Reaguje na změnu výběru ve stromu Sorted (Board/PDF) a naplní formulář.
+        """
+        item = self.tree_sorted.currentItem()
+        if not item or not item.parent():
+            # kořen Board, nebo nic
             return
-        item = sel[0]
-        p = item.data(0, Qt.UserRole + 1)
-        if not p:
-            # vybrán pouze board – vymaž detaily
-            self._sorted_fill_details(None)
+        rec = item.data(0, Qt.UserRole)
+        if not rec:
             return
-        from pathlib import Path
-        self._sorted_fill_details(Path(p))
+    
+        def s(v): return "" if v is None else str(v)
+    
+        # existující pole
+        self.ed_board.setText(s(getattr(rec, "board", "")))
+        self.ed_app_type.setText(s(getattr(rec, "application_type", "")))
+        self.ed_inst_name.setText(s(getattr(rec, "institution_name", "")))
+        self.ed_cand_name.setText(s(getattr(rec, "candidate_name", "")))
+        self.ed_rec_acad.setText(s(getattr(rec, "recognition_academia", "")))
+        self.ed_rec_cert.setText(s(getattr(rec, "recognition_certified", "")))
+        self.ed_fullname.setText(s(getattr(rec, "contact_full_name", "")))
+        self.ed_email.setText(s(getattr(rec, "contact_email", "")))
+        self.ed_phone.setText(s(getattr(rec, "contact_phone", "")))
+        self.ed_address.setPlainText(s(getattr(rec, "contact_postal_address", "")))
+        self.ed_syllabi.setPlainText(s(getattr(rec, "syllabi_integration_description", "")))
+        self.ed_courses.setPlainText(s(getattr(rec, "courses_modules_list", "")))
+        self.ed_proof.setPlainText(s(getattr(rec, "proof_of_istqb_certifications", "")))
+        self.ed_links.setPlainText(s(getattr(rec, "university_links", "")))
+        self.ed_additional.setPlainText(s(getattr(rec, "additional_information_documents", "")))
+        self.ed_sigdate.setText(s(getattr(rec, "signature_date", "")))
+        self.ed_filename.setText(s(getattr(rec, "path", "")))
+    
+        # NOVÉ
+        self.ed_printed.setText(s(getattr(rec, "printed_name_title", "")))
+        self.ed_istqb_board.setText(s(getattr(rec, "istqb_receiving_board", "")))
+        self.ed_istqb_received.setText(s(getattr(rec, "istqb_date_received", "")))
+        self.ed_istqb_valid_from.setText(s(getattr(rec, "istqb_valid_from", "")))
+        self.ed_istqb_valid_to.setText(s(getattr(rec, "istqb_valid_to", "")))
     
     def _sorted_fill_details(self, abs_path: Optional[Path]) -> None:
         # Vyčisti
@@ -3442,61 +3643,68 @@ class MainWindow(QMainWindow):
     def _sorted_set_status(self, txt: Optional[str]) -> None:
         self.lbl_sorted_status.setText("—" if not txt else txt)
     
-    def _sorted_set_editable(self, can_edit: bool) -> None:
-        # Board a File name necháme read-only; ostatní podle can_edit
-        for w in (self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
-                  self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname,
-                  self.ed_email, self.ed_phone, self.ed_sigdate):
-            w.setReadOnly(not can_edit)
-        for w in (self.ed_address, self.ed_syllabi, self.ed_courses,
-                  self.ed_proof, self.ed_links, self.ed_additional):
-            w.setReadOnly(not can_edit)
-
+    def _sorted_set_editable(self, editable: bool) -> None:
+        """
+        Přepíná read-only stav editačních polí v Sorted tab.
+        """
+        widgets = [
+            self.ed_board, self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
+            self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname, self.ed_email,
+            self.ed_phone, self.ed_address, self.ed_syllabi, self.ed_courses,
+            self.ed_proof, self.ed_links, self.ed_additional, self.ed_sigdate,
+            self.ed_filename,
+            # NOVÉ:
+            self.ed_printed, self.ed_istqb_board, self.ed_istqb_received,
+            self.ed_istqb_valid_from, self.ed_istqb_valid_to,
+        ]
+        for w in widgets:
+            if hasattr(w, "setReadOnly"):
+                w.setReadOnly(not editable)
+            else:
+                w.setEnabled(editable)
+                
     def _sorted_save_changes(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
-        from pathlib import Path
-    
-        abs_path = getattr(self, "_sorted_current_path", None)
-        if not abs_path:
-            QMessageBox.information(self, "Save to DB", "No PDF selected.")
+        """
+        Uloží změny z formuláře Sorted do DB záznamu.
+        """
+        item = self.tree_sorted.currentItem()
+        if not item or not item.parent():
+            return
+        rec = item.data(0, Qt.UserRole)
+        if not rec:
             return
     
-        # Sesbírej hodnoty
-        def _get(w):
-            return w.toPlainText() if hasattr(w, "toPlainText") else w.text()
+        # existující
+        rec.board = self.ed_board.text().strip()
+        rec.application_type = self.ed_app_type.text().strip()
+        rec.institution_name = self.ed_inst_name.text().strip()
+        rec.candidate_name = self.ed_cand_name.text().strip()
+        rec.recognition_academia = self.ed_rec_acad.text().strip()
+        rec.recognition_certified = self.ed_rec_cert.text().strip()
+        rec.contact_full_name = self.ed_fullname.text().strip()
+        rec.contact_email = self.ed_email.text().strip()
+        rec.contact_phone = self.ed_phone.text().strip()
+        rec.contact_postal_address = self.ed_address.toPlainText().strip()
+        rec.syllabi_integration_description = self.ed_syllabi.toPlainText().strip()
+        rec.courses_modules_list = self.ed_courses.toPlainText().strip()
+        rec.proof_of_istqb_certifications = self.ed_proof.toPlainText().strip()
+        rec.university_links = self.ed_links.toPlainText().strip()
+        rec.additional_information_documents = self.ed_additional.toPlainText().strip()
+        rec.signature_date = self.ed_sigdate.text().strip()
+        # NOVÉ
+        rec.printed_name_title = self.ed_printed.text().strip()
+        rec.istqb_receiving_board = self.ed_istqb_board.text().strip()
+        rec.istqb_date_received = self.ed_istqb_received.text().strip()
+        rec.istqb_valid_from = self.ed_istqb_valid_from.text().strip()
+        rec.istqb_valid_to = self.ed_istqb_valid_to.text().strip()
     
-        new_data = {
-            "board": self.ed_board.text().strip(),
-            "application_type": _get(self.ed_app_type).strip(),
-            "institution_name": _get(self.ed_inst_name).strip(),
-            "candidate_name": _get(self.ed_cand_name).strip(),
-            "recognition_academia": _get(self.ed_rec_acad).strip(),
-            "recognition_certified": _get(self.ed_rec_cert).strip(),
-            "contact_full_name": _get(self.ed_fullname).strip(),
-            "contact_email": _get(self.ed_email).strip(),
-            "contact_phone": _get(self.ed_phone).strip(),
-            "contact_postal_address": _get(self.ed_address).strip(),
-            "syllabi_integration_description": _get(self.ed_syllabi).strip(),
-            "courses_modules_list": _get(self.ed_courses).strip(),
-            "proof_of_istqb_certifications": _get(self.ed_proof).strip(),
-            "university_links": _get(self.ed_links).strip(),
-            "additional_information_documents": _get(self.ed_additional).strip(),
-            "signature_date": _get(self.ed_sigdate).strip(),
-            "file_name": _get(self.ed_filename).strip(),
-            "path": str(Path(abs_path).resolve()),
-        }
-    
-        # Ulož do DB jako edited=True
-        self.sorted_db.mark_edited(Path(abs_path), new_data)
-        self.sorted_db.save()
-    
-        self._sorted_set_editable(False)
-        self._sorted_set_status("Edited")
-    
+        # uložit do DB (stávající mechanismus)
         try:
+            self.sorted_db_update_record(rec)  # používám tvoji existující metodu, beze změny signatury
             self.statusBar().showMessage("Saved to DB.")
-        except Exception:
-            pass
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Save", f"Cannot save: {e}")
         
     def _filter_board_sorted(self, txt: str) -> None:
         proxy = self.table_sorted.model()
@@ -3543,22 +3751,14 @@ class MainWindow(QMainWindow):
 
     # ----- Browser tab -----
     def _build_browser_tab(self) -> None:
-        """
-        PDF Browser: reflow layout to vertical split (TOP: file tree, BOTTOM: details).
-        One-shot resize of main window to comfortably fit Name column + details.
-        (Minimal-change: 'Known Board' a 'Sorted Status' labels jsou vytvořeny,
-        ale nejsou přidány do formuláře -> v detailu se nezobrazují.)
-        """
         from PySide6.QtCore import Qt, QTimer
         from PySide6.QtWidgets import (
             QSplitter, QWidget, QVBoxLayout, QTreeView, QFormLayout, QLabel,
             QScrollArea, QFileSystemModel, QSizePolicy, QHeaderView
         )
     
-        # === Kořenový vertikální splitter: Nahoře strom, dole detail ===
         vsplit = QSplitter(Qt.Vertical, self.browser_tab)
     
-        # --- Nahoře: strom PDF ---
         top_widget = QWidget(vsplit)
         top_layout = QVBoxLayout(top_widget)
     
@@ -3573,7 +3773,6 @@ class MainWindow(QMainWindow):
         self.tree.setSortingEnabled(True)
         self.tree.setUniformRowHeights(True)
     
-        # Necháme Qt spočítat šířku sloupce Name podle obsahu
         header = self.tree.header()
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(80)
@@ -3582,13 +3781,10 @@ class MainWindow(QMainWindow):
         except Exception:
             header.setResizeMode(0, QHeaderView.ResizeToContents)
     
-        # Signály zůstávají (žádná změna chování)
         self.tree.doubleClicked.connect(self._open_from_tree)
         self.tree.selectionModel().selectionChanged.connect(self._tree_selection_changed)
-    
         top_layout.addWidget(self.tree)
     
-        # --- Dole: detail (ponechávám původní názvy lbl_* pro _update_detail_panel) ---
         bottom_widget = QWidget(vsplit)
         bottom_layout = QVBoxLayout(bottom_widget)
     
@@ -3608,9 +3804,9 @@ class MainWindow(QMainWindow):
             lab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             return lab
     
-        # Vytvoření labelů přesně podle toho, co očekává _update_detail_panel(...)
+        # EXISTUJÍCÍ
         self.lbl_board = getattr(self, "lbl_board", _mklabel())
-        self.lbl_known = getattr(self, "lbl_known", _mklabel())                # <- existuje, ale nebude přidán
+        self.lbl_known = getattr(self, "lbl_known", _mklabel())
         self.lbl_app_type = getattr(self, "lbl_app_type", _mklabel())
         self.lbl_inst = getattr(self, "lbl_inst", _mklabel())
         self.lbl_cand = getattr(self, "lbl_cand", _mklabel())
@@ -3626,11 +3822,17 @@ class MainWindow(QMainWindow):
         self.lbl_proof = getattr(self, "lbl_proof", _mklabel())
         self.lbl_links = getattr(self, "lbl_links", _mklabel())
         self.lbl_additional = getattr(self, "lbl_additional", _mklabel())
-        self.lbl_sorted_status = getattr(self, "lbl_sorted_status", _mklabel())  # <- existuje, ale nebude přidán
     
-        # Sestavení formuláře (pořadí zachováno, vynechány pouze dvě řádky)
+        # NOVÉ – sekce 6 a 7
+        self.lbl_printed = getattr(self, "lbl_printed", _mklabel())
+        self.lbl_istqb_board = getattr(self, "lbl_istqb_board", _mklabel())
+        self.lbl_istqb_received = getattr(self, "lbl_istqb_received", _mklabel())
+        self.lbl_istqb_valid_from = getattr(self, "lbl_istqb_valid_from", _mklabel())
+        self.lbl_istqb_valid_to = getattr(self, "lbl_istqb_valid_to", _mklabel())
+    
+        # Form (pořadí)
         self.detail_form.addRow("Board:", self.lbl_board)
-        # self.detail_form.addRow("Known Board:", self.lbl_known)        # SKRYTO
+        # Known Board / Sorted Status – dle tvého přání dříve skryto → neuvádím
         self.detail_form.addRow("Application Type:", self.lbl_app_type)
         self.detail_form.addRow("Institution Name:", self.lbl_inst)
         self.detail_form.addRow("Candidate Name:", self.lbl_cand)
@@ -3640,18 +3842,23 @@ class MainWindow(QMainWindow):
         self.detail_form.addRow("Email Address:", self.lbl_email)
         self.detail_form.addRow("Phone Number:", self.lbl_phone)
         self.detail_form.addRow("Postal Address:", self.lbl_postal)
-        self.detail_form.addRow("Signature Date:", self.lbl_date)
         self.detail_form.addRow("Syllabi Integration:", self.lbl_syllabi)
         self.detail_form.addRow("Courses/Modules:", self.lbl_courses)
         self.detail_form.addRow("Proof of ISTQB Certifications:", self.lbl_proof)
         self.detail_form.addRow("University Links:", self.lbl_links)
         self.detail_form.addRow("Additional Info/Documents:", self.lbl_additional)
-        # self.detail_form.addRow("Sorted Status:", self.lbl_sorted_status)  # SKRYTO
+    
+        # NOVÉ (sekce 6 + 7)
+        self.detail_form.addRow("Printed Name, Title:", self.lbl_printed)
+        self.detail_form.addRow("Signature Date:", self.lbl_date)
+        self.detail_form.addRow("For ISTQB Academia Purpose Only – Receiving Member Board:", self.lbl_istqb_board)
+        self.detail_form.addRow("For ISTQB Academia Purpose Only – Date Received:", self.lbl_istqb_received)
+        self.detail_form.addRow("For ISTQB Academia Purpose Only – Validity Start Date:", self.lbl_istqb_valid_from)
+        self.detail_form.addRow("For ISTQB Academia Purpose Only – Validity End Date:", self.lbl_istqb_valid_to)
     
         scroll.setWidget(form_host)
         bottom_layout.addWidget(scroll)
     
-        # Přidej panely do splitteru
         vsplit.addWidget(top_widget)
         vsplit.addWidget(bottom_widget)
         vsplit.setStretchFactor(0, 2)
@@ -3659,23 +3866,20 @@ class MainWindow(QMainWindow):
         vsplit.setCollapsible(0, False)
         vsplit.setCollapsible(1, False)
     
-        # Zabalit do záložky
         from PySide6.QtWidgets import QVBoxLayout as _VBL
         outer = _VBL(self.browser_tab)
         outer.addWidget(vsplit)
     
-        # Jednorázově po načtení kořenového adresáře zvětšit okno podle šířky Name
         def _widen_window_once():
             try:
                 self.tree.resizeColumnToContents(0)
                 name_w = max(self.tree.sizeHintForColumn(0), header.sectionSize(0), 220)
             except Exception:
                 name_w = 260
-            desired_width = int(name_w + 80)  # sloupec + okraje/scroll
+            desired_width = int(name_w + 80)
             desired_height = max(self.height(), 720)
             if self.width() < desired_width:
                 self.resize(desired_width, desired_height)
-    
         try:
             self.fs_model.directoryLoaded.connect(lambda *_: QTimer.singleShot(0, _widen_window_once))
         except Exception:
@@ -4035,34 +4239,36 @@ class MainWindow(QMainWindow):
             # Set display text to 1-based row number
             src.setData(src.index(sidx.row(), 0), str(r + 1), Qt.DisplayRole)
 
-    def _update_detail_panel(self, rec: Optional[PdfRecord]) -> None:
-        if rec is None:
-            for lbl in (
-                self.lbl_board, self.lbl_known, self.lbl_app_type, self.lbl_inst, self.lbl_cand,
-                self.lbl_acad, self.lbl_cert, self.lbl_contact, self.lbl_email, self.lbl_phone,
-                self.lbl_postal, self.lbl_date, self.lbl_syllabi, self.lbl_courses,
-                self.lbl_proof, self.lbl_links, self.lbl_additional
-            ):
-                lbl.setText("-")
-            return
-
-        self.lbl_board.setText(rec.board)
-        self.lbl_known.setText("Yes" if rec.board_known else "Unverified")
-        self.lbl_app_type.setText(rec.application_type or "")
-        self.lbl_inst.setText(rec.institution_name or "")
-        self.lbl_cand.setText(rec.candidate_name or "")
-        self.lbl_acad.setText(rec.recognition_academia or "")
-        self.lbl_cert.setText(rec.recognition_certified or "")
-        self.lbl_contact.setText(rec.contact_full_name or "")
-        self.lbl_email.setText(rec.contact_email or "")
-        self.lbl_phone.setText(rec.contact_phone or "")
-        self.lbl_postal.setText(rec.contact_postal_address or "")
-        self.lbl_date.setText(rec.signature_date or "")
-        self.lbl_syllabi.setText(rec.syllabi_integration_description or "")
-        self.lbl_courses.setText(rec.courses_modules_list or "")
-        self.lbl_proof.setText(rec.proof_of_istqb_certifications or "")
-        self.lbl_links.setText(rec.university_links or "")
-        self.lbl_additional.setText(rec.additional_information_documents or "")
+    def _update_detail_panel(self, rec) -> None:
+        """
+        Naplní detaily v PDF Browser panelu pro daný 'rec'.
+        Ošetřuje None -> "" a zachovává všechny dřívější položky.
+        """
+        def s(v): return "" if v is None else str(v)
+    
+        try: self.lbl_board.setText(s(getattr(rec, "board", "")));               except Exception: pass
+        try: self.lbl_app_type.setText(s(getattr(rec, "application_type", ""))); except Exception: pass
+        try: self.lbl_inst.setText(s(getattr(rec, "institution_name", "")));     except Exception: pass
+        try: self.lbl_cand.setText(s(getattr(rec, "candidate_name", "")));       except Exception: pass
+        try: self.lbl_acad.setText(s(getattr(rec, "recognition_academia", ""))); except Exception: pass
+        try: self.lbl_cert.setText(s(getattr(rec, "recognition_certified", "")));except Exception: pass
+        try: self.lbl_contact.setText(s(getattr(rec, "contact_full_name", ""))); except Exception: pass
+        try: self.lbl_email.setText(s(getattr(rec, "contact_email", "")));       except Exception: pass
+        try: self.lbl_phone.setText(s(getattr(rec, "contact_phone", "")));       except Exception: pass
+        try: self.lbl_postal.setText(s(getattr(rec, "contact_postal_address", ""))); except Exception: pass
+        try: self.lbl_syllabi.setText(s(getattr(rec, "syllabi_integration_description", ""))); except Exception: pass
+        try: self.lbl_courses.setText(s(getattr(rec, "courses_modules_list", ""))); except Exception: pass
+        try: self.lbl_proof.setText(s(getattr(rec, "proof_of_istqb_certifications", ""))); except Exception: pass
+        try: self.lbl_links.setText(s(getattr(rec, "university_links", "")));    except Exception: pass
+        try: self.lbl_additional.setText(s(getattr(rec, "additional_information_documents", ""))); except Exception: pass
+    
+        # NOVÉ
+        try: self.lbl_printed.setText(s(getattr(rec, "printed_name_title", "")));      except Exception: pass
+        try: self.lbl_date.setText(s(getattr(rec, "signature_date", "")));             except Exception: pass
+        try: self.lbl_istqb_board.setText(s(getattr(rec, "istqb_receiving_board", "")));      except Exception: pass
+        try: self.lbl_istqb_received.setText(s(getattr(rec, "istqb_date_received", "")));     except Exception: pass
+        try: self.lbl_istqb_valid_from.setText(s(getattr(rec, "istqb_valid_from", "")));       except Exception: pass
+        try: self.lbl_istqb_valid_to.setText(s(getattr(rec, "istqb_valid_to", "")));           except Exception: pass
         
         
         
