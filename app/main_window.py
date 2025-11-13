@@ -4242,33 +4242,99 @@ class MainWindow(QMainWindow):
     def _update_detail_panel(self, rec) -> None:
         """
         Naplní detaily v PDF Browser panelu pro daný 'rec'.
-        Ošetřuje None -> "" a zachovává všechny dřívější položky.
+        Bezpečně (try/except po blocích), žádné one-liner try;except.
+        Obsahuje i NOVÁ pole (sekce 6 a 7).
         """
-        def s(v): return "" if v is None else str(v)
+        def s(v): 
+            return "" if v is None else str(v)
     
-        try: self.lbl_board.setText(s(getattr(rec, "board", "")));               except Exception: pass
-        try: self.lbl_app_type.setText(s(getattr(rec, "application_type", ""))); except Exception: pass
-        try: self.lbl_inst.setText(s(getattr(rec, "institution_name", "")));     except Exception: pass
-        try: self.lbl_cand.setText(s(getattr(rec, "candidate_name", "")));       except Exception: pass
-        try: self.lbl_acad.setText(s(getattr(rec, "recognition_academia", ""))); except Exception: pass
-        try: self.lbl_cert.setText(s(getattr(rec, "recognition_certified", "")));except Exception: pass
-        try: self.lbl_contact.setText(s(getattr(rec, "contact_full_name", ""))); except Exception: pass
-        try: self.lbl_email.setText(s(getattr(rec, "contact_email", "")));       except Exception: pass
-        try: self.lbl_phone.setText(s(getattr(rec, "contact_phone", "")));       except Exception: pass
-        try: self.lbl_postal.setText(s(getattr(rec, "contact_postal_address", ""))); except Exception: pass
-        try: self.lbl_syllabi.setText(s(getattr(rec, "syllabi_integration_description", ""))); except Exception: pass
-        try: self.lbl_courses.setText(s(getattr(rec, "courses_modules_list", ""))); except Exception: pass
-        try: self.lbl_proof.setText(s(getattr(rec, "proof_of_istqb_certifications", ""))); except Exception: pass
-        try: self.lbl_links.setText(s(getattr(rec, "university_links", "")));    except Exception: pass
-        try: self.lbl_additional.setText(s(getattr(rec, "additional_information_documents", ""))); except Exception: pass
+        # Základní sekce (původní)
+        try:
+            self.lbl_board.setText(s(getattr(rec, "board", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_app_type.setText(s(getattr(rec, "application_type", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_inst.setText(s(getattr(rec, "institution_name", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_cand.setText(s(getattr(rec, "candidate_name", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_acad.setText(s(getattr(rec, "recognition_academia", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_cert.setText(s(getattr(rec, "recognition_certified", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_contact.setText(s(getattr(rec, "contact_full_name", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_email.setText(s(getattr(rec, "contact_email", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_phone.setText(s(getattr(rec, "contact_phone", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_postal.setText(s(getattr(rec, "contact_postal_address", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_syllabi.setText(s(getattr(rec, "syllabi_integration_description", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_courses.setText(s(getattr(rec, "courses_modules_list", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_proof.setText(s(getattr(rec, "proof_of_istqb_certifications", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_links.setText(s(getattr(rec, "university_links", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_additional.setText(s(getattr(rec, "additional_information_documents", "")))
+        except Exception:
+            pass
     
-        # NOVÉ
-        try: self.lbl_printed.setText(s(getattr(rec, "printed_name_title", "")));      except Exception: pass
-        try: self.lbl_date.setText(s(getattr(rec, "signature_date", "")));             except Exception: pass
-        try: self.lbl_istqb_board.setText(s(getattr(rec, "istqb_receiving_board", "")));      except Exception: pass
-        try: self.lbl_istqb_received.setText(s(getattr(rec, "istqb_date_received", "")));     except Exception: pass
-        try: self.lbl_istqb_valid_from.setText(s(getattr(rec, "istqb_valid_from", "")));       except Exception: pass
-        try: self.lbl_istqb_valid_to.setText(s(getattr(rec, "istqb_valid_to", "")));           except Exception: pass
+        # NOVÉ — Sekce 6 + 7
+        try:
+            self.lbl_printed.setText(s(getattr(rec, "printed_name_title", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_date.setText(s(getattr(rec, "signature_date", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_istqb_board.setText(s(getattr(rec, "istqb_receiving_board", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_istqb_received.setText(s(getattr(rec, "istqb_date_received", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_istqb_valid_from.setText(s(getattr(rec, "istqb_valid_from", "")))
+        except Exception:
+            pass
+        try:
+            self.lbl_istqb_valid_to.setText(s(getattr(rec, "istqb_valid_to", "")))
+        except Exception:
+            pass
         
         
         
