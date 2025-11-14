@@ -2886,75 +2886,70 @@ class MainWindow(QMainWindow):
 
     def _build_sorted_tab(self) -> None:
         """
-        UI pro 'Sorted PDFs': vlevo strom, vpravo formulář.
-        Rozšířeno o pole 'File name' (read-only), nic dalšího se nemění.
+        Záložka 'Sorted PDFs': vlevo strom, vpravo formulář.
+        Přidány editory pro: Printed Name, Title; Receiving Member Board; Date Received; Validity Start/End.
+        Navíc přidán řádek 'File name' (read-only), aby nepadalo _sorted_fill_details().
         """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
             QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy
         )
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QTimer
     
         layout = QVBoxLayout()
         self.split_sorted = QSplitter(self.sorted_tab)
         self.split_sorted.setOrientation(Qt.Horizontal)
     
-        # Levý strom
+        # LEVÁ strana – strom
         self.tree_sorted = QTreeWidget()
         self.tree_sorted.setHeaderLabels(["Board / PDF"])
         self.tree_sorted.itemSelectionChanged.connect(self._sorted_on_item_changed)
     
-        # Pravý formulář
+        # PRAVÁ strana – formulář
         right = QWidget()
         right_layout = QVBoxLayout(right)
         self.form_sorted = QFormLayout()
-        self.form_sorted.setFormAlignment(Qt.AlignTop)
-        self.form_sorted.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
+        self.form_sorted.setRowWrapPolicy(QFormLayout.WrapLongRows)
         self.form_sorted.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     
-        def _line() -> QLineEdit:
-            le = QLineEdit()
-            le.setMinimumHeight(36)
-            le.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            le.setClearButtonEnabled(True)
-            return le
+        def _mkline() -> QLineEdit:
+            e = QLineEdit()
+            e.setClearButtonEnabled(True)
+            return e
+        def _mktxt() -> QPlainTextEdit:
+            t = QPlainTextEdit()
+            t.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            t.setMaximumBlockCount(100000)
+            return t
     
-        def _pte() -> QPlainTextEdit:
-            p = QPlainTextEdit()
-            p.setMinimumHeight(96)
-            p.setMaximumHeight(220)
-            p.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            return p
+        # Základní pole
+        self.ed_board = _mkline(); self.ed_board.setReadOnly(True)
+        self.ed_app_type = _mkline()
+        self.ed_inst_name = _mkline()
+        self.ed_cand_name = _mkline()
+        self.ed_rec_acad = _mkline()
+        self.ed_rec_cert = _mkline()
+        self.ed_fullname = _mkline()
+        self.ed_email = _mkline()
+        self.ed_phone = _mkline()
+        self.ed_address = _mktxt()
+        self.ed_syllabi = _mktxt()
+        self.ed_courses = _mktxt()
+        self.ed_proof = _mktxt()
+        self.ed_links = _mktxt()
+        self.ed_additional = _mktxt()
+        # Consent
+        self.ed_printed_name_title = _mkline()   # NOVĚ
+        self.ed_sigdate = _mkline()
+        # ISTQB internal
+        self.ed_receiving_member_board = _mkline()  # NOVĚ
+        self.ed_date_received = _mkline()           # NOVĚ
+        self.ed_validity_start_date = _mkline()     # NOVĚ
+        self.ed_validity_end_date = _mkline()       # NOVĚ
+        # File name (read-only, aby se necrashovalo)
+        self.ed_filename = _mkline(); self.ed_filename.setReadOnly(True)
     
-        # Jednořádkové
-        self.ed_board = _line(); self.ed_board.setReadOnly(True)
-        self.ed_app_type = _line()
-        self.ed_inst_name = _line()
-        self.ed_cand_name = _line()
-        self.ed_rec_acad = _line()
-        self.ed_rec_cert = _line()
-        self.ed_fullname = _line()
-        self.ed_email = _line()
-        self.ed_phone = _line()
-        # Consent + ISTQB internal
-        self.ed_printed_name_title = _line()
-        self.ed_sigdate = _line()
-        self.ed_receiving_member_board = _line()
-        self.ed_date_received = _line()
-        self.ed_validity_start_date = _line()
-        self.ed_validity_end_date = _line()
-        # File name (NOVĚ)
-        self.ed_filename = _line(); self.ed_filename.setReadOnly(True)
-    
-        # Víceřádkové
-        self.ed_address = _pte()
-        self.ed_syllabi = _pte()
-        self.ed_courses = _pte()
-        self.ed_proof = _pte()
-        self.ed_links = _pte()
-        self.ed_additional = _pte()
-    
-        # Alias názvů (beze změny)
+        # Alias (stávající jména používaná jinde v kódu nechávám)
         self.ed_contact_full_name = self.ed_fullname
         self.ed_contact_email = self.ed_email
         self.ed_contact_phone = self.ed_phone
@@ -2965,7 +2960,7 @@ class MainWindow(QMainWindow):
         self.ed_university_links = self.ed_links
         self.ed_additional_information_documents = self.ed_additional
     
-        # Pořadí
+        # Form – pořadí (Printed Name před Signature Date; sekce 7 za ním)
         self.form_sorted.addRow("Board:", self.ed_board)
         self.form_sorted.addRow("Application Type:", self.ed_app_type)
         self.form_sorted.addRow("Institution Name:", self.ed_inst_name)
@@ -2989,8 +2984,10 @@ class MainWindow(QMainWindow):
         self.form_sorted.addRow("Date Received:", self.ed_date_received)
         self.form_sorted.addRow("Validity Start Date:", self.ed_validity_start_date)
         self.form_sorted.addRow("Validity End Date:", self.ed_validity_end_date)
-        # File (NOVĚ)
+        # File name
         self.form_sorted.addRow("File name:", self.ed_filename)
+    
+        right_layout.addLayout(self.form_sorted)
     
         # Tlačítka
         btn_row = QHBoxLayout()
@@ -3010,9 +3007,10 @@ class MainWindow(QMainWindow):
         self.btn_sorted_export.clicked.connect(self.export_sorted_db)
         self.btn_sorted_rescan.clicked.connect(self.rescan_sorted)
     
-        # Výchozí read-only
+        # Výchozí – read-only; Board/File name vždy read-only
         self._sorted_set_editable(False)
     
+        # Osazení splitteru a layoutu
         self.split_sorted.addWidget(self.tree_sorted)
         self.split_sorted.addWidget(right)
         self.split_sorted.setStretchFactor(0, 2)
@@ -3023,23 +3021,18 @@ class MainWindow(QMainWindow):
     def export_sorted_db(self) -> None:
         """
         Export CURRENT dataset from 'Sorted PDFs' tab using data stored in DB (self.sorted_db),
-        with the SAME dialog and options as Overview:
-          - formats: XLSX / CSV / TXT (multi-select, order matters for default extension),
-          - board filter: All boards or specific subset,
-          - fields: same labels/order as Overview (user-selectable),
-        and the SAME engines: _export_to_xlsx/_export_to_csv/_export_to_txt.
+        s nezávislostí na SortedDb.boards().
         """
         from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QCheckBox, QLabel,
-            QComboBox, QPushButton, QListWidget, QListWidgetItem, QScrollArea,
-            QWidget, QGridLayout, QDialogButtonBox, QFileDialog, QMessageBox
+            QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QCheckBox,
+            QListWidget, QListWidgetItem, QDialogButtonBox, QFileDialog, QMessageBox
         )
         from PySide6.QtCore import Qt
         from datetime import datetime
         import os
         from pathlib import Path
     
-        # --- Columns (labels/keys) – keep identical to Overview order/labels ---
+        # Columns (labels/keys) – stejné jako v Overview
         FIELDS: list[tuple[str, str]] = [
             ("Board", "board"),
             ("Application Type", "application_type"),
@@ -3065,286 +3058,191 @@ class MainWindow(QMainWindow):
             ("File name", "file_name"),
         ]
     
-        # --- Helper: boards present in the current Sorted tree (to mirror the view) ---
-        def _collect_sorted_boards() -> list[str]:
-            boards: list[str] = []
+        # Pomocná: iterace DB položek (nezávisle na boards())
+        def _iter_sorted_items():
+            it = getattr(self.sorted_db, "iter_items", None)
+            if callable(it):
+                yield from it()
+                return
             try:
-                top_count = self.tree_sorted.topLevelItemCount()
-                for i in range(top_count):
-                    t = self.tree_sorted.topLevelItem(i)
-                    if t:
-                        boards.append(t.text(0))
+                for k, v in self.sorted_db.items():
+                    yield Path(k), v
             except Exception:
-                pass
-            # fallback: use Overview boards if available
-            if not boards and hasattr(self, "_collect_available_boards"):
-                try:
-                    boards = list(self._collect_available_boards())
-                except Exception:
-                    pass
-            return sorted({b for b in boards if b})
+                return
     
-        # --- Export dialog (identical structure/behavior to Overview) ---
+        # Zjisti dostupné boardy z dat
+        boards_avail = set()
+        for abs_path, rec in _iter_sorted_items():
+            try:
+                data = rec.get("data", {}) if isinstance(rec, dict) else {}
+                board = data.get("board")
+                if board:
+                    boards_avail.add(board)
+            except Exception:
+                continue
+        boards_avail = sorted(boards_avail)
+    
+        # Dialog – jednoduchá verze (formáty + výběr boards + výběr polí)
         class ExportDialog(QDialog):
             def __init__(self, boards_avail: list[str], parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("Export options")
                 main = QVBoxLayout(self)
     
-                # === Formats ===
                 gb_formats = QGroupBox("Formats")
                 lay_f = QHBoxLayout(gb_formats)
-                self.cb_xlsx = QCheckBox("XLSX")
+                self.cb_xlsx = QCheckBox("XLSX"); self.cb_xlsx.setChecked(True)
                 self.cb_csv  = QCheckBox("CSV")
                 self.cb_txt  = QCheckBox("TXT")
-                # default like Overview: XLSX pre-checked
-                self.cb_xlsx.setChecked(True)
                 lay_f.addWidget(self.cb_xlsx); lay_f.addWidget(self.cb_csv); lay_f.addWidget(self.cb_txt)
                 main.addWidget(gb_formats)
     
-                # === Boards (All / subset) ===
-                gb_boards = QGroupBox("Boards")
-                lay_b = QVBoxLayout(gb_boards)
-                self.chk_all_boards = QCheckBox("All boards")
-                self.chk_all_boards.setChecked(True)
-                lay_b.addWidget(self.chk_all_boards)
-    
-                self.lst_boards = QListWidget()
-                self.lst_boards.setSelectionMode(QListWidget.MultiSelection)
+                gb_board = QGroupBox("Boards")
+                lay_b = QVBoxLayout(gb_board)
+                self.list_boards = QListWidget()
+                self.list_boards.setSelectionMode(QListWidget.MultiSelection)
                 for b in boards_avail:
                     it = QListWidgetItem(b)
-                    self.lst_boards.addItem(it)
-                    it.setSelected(False)
-                self.lst_boards.setEnabled(False)  # enabled only when not 'All boards'
-                lay_b.addWidget(self.lst_boards)
-                main.addWidget(gb_boards)
+                    it.setSelected(True)  # defaultně všechny
+                    self.list_boards.addItem(it)
+                lay_b.addWidget(self.list_boards)
+                main.addWidget(gb_board)
     
-                def _toggle_boards(_=None):
-                    self.lst_boards.setEnabled(not self.chk_all_boards.isChecked())
-                self.chk_all_boards.toggled.connect(_toggle_boards)
-    
-                # === Fields (checkbox list, in a scroll) ===
-                gb_fields = QGroupBox("Fields (columns)")
-                lay_fields = QVBoxLayout(gb_fields)
-                scr = QScrollArea()
-                scr.setWidgetResizable(True)
-                host = QWidget()
-                grid = QGridLayout(host)
-    
-                self.field_checks: list[tuple[QCheckBox, tuple[str, str]]] = []
-                for row, (label, key) in enumerate(FIELDS):
-                    cb = QCheckBox(label)
-                    cb.setChecked(True)
-                    self.field_checks.append((cb, (label, key)))
-                    grid.addWidget(cb, row, 0)
-                scr.setWidget(host)
-                lay_fields.addWidget(scr)
+                gb_fields = QGroupBox("Fields (order)")
+                lay_fi = QVBoxLayout(gb_fields)
+                self.list_fields = QListWidget()
+                self.list_fields.setSelectionMode(QListWidget.MultiSelection)
+                for label, key in FIELDS:
+                    it = QListWidgetItem(label)
+                    it.setData(Qt.UserRole, key)
+                    it.setSelected(True)
+                    self.list_fields.addItem(it)
+                lay_fi.addWidget(self.list_fields)
                 main.addWidget(gb_fields)
     
-                # === Buttons ===
                 btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-                main.addWidget(btns)
-                btns.accepted.connect(self._accept)
+                btns.accepted.connect(self.accept)
                 btns.rejected.connect(self.reject)
+                main.addWidget(btns)
     
-                self.result: dict | None = None
-    
-            def _accept(self):
-                formats: list[str] = []
-                if self.cb_xlsx.isChecked(): formats.append("xlsx")
-                if self.cb_csv.isChecked():  formats.append("csv")
-                if self.cb_txt.isChecked():  formats.append("txt")
-                if not formats:
-                    QMessageBox.information(self, "Export", "Please choose at least one format.")
-                    return
-    
-                boards_sel: list[str] | None
-                if self.chk_all_boards.isChecked():
-                    boards_sel = None  # all
-                else:
-                    boards_sel = [it.text() for it in self.lst_boards.selectedItems()]
-                    if not boards_sel:
-                        QMessageBox.information(self, "Export", "Please select at least one board or check 'All boards'.")
-                        return
-    
-                fields: list[tuple[str, str]] = []
-                for cb, pair in self.field_checks:
-                    if cb.isChecked():
-                        fields.append(pair)
-                if not fields:
-                    QMessageBox.information(self, "Export", "Please select at least one field.")
-                    return
-    
-                self.result = {
-                    "formats": formats,
-                    "boards": boards_sel,   # None = all
-                    "fields": fields,       # list of (label, key)
-                }
-                self.accept()
-    
-        # Prepare dialog inputs
-        boards_avail = _collect_sorted_boards()
         dlg = ExportDialog(boards_avail, self)
-        if dlg.exec_() != QDialog.Accepted or dlg.result is None:
+        if dlg.exec() != QDialog.Accepted:
             return
     
-        formats: list[str] = dlg.result["formats"]
-        boards_sel: list[str] | None = dlg.result["boards"]
-        fields: list[tuple[str, str]] = dlg.result["fields"]
+        fmt_xlsx = dlg.cb_xlsx.isChecked()
+        fmt_csv  = dlg.cb_csv.isChecked()
+        fmt_txt  = dlg.cb_txt.isChecked()
+        selected_fields = [(dlg.list_fields.item(i).text(), dlg.list_fields.item(i).data(Qt.UserRole))
+                           for i in range(dlg.list_fields.count())
+                           if dlg.list_fields.item(i).isSelected()]
+        if not selected_fields:
+            QMessageBox.warning(self, "Export", "No fields selected.")
+            return
     
-        # === Build dataset from DB (respect boards filter and fields order) ===
-        headers = [lbl for (lbl, _key) in fields]
-        rows: list[list[str]] = []
+        boards_sel = {dlg.list_boards.item(i).text()
+                      for i in range(dlg.list_boards.count())
+                      if dlg.list_boards.item(i).isSelected()}
+        if not boards_sel:
+            boards_sel = set(boards_avail)
     
-        # collect paths per current tree (visible dataset)
-        paths: list[Path] = []
-        try:
-            top_count = self.tree_sorted.topLevelItemCount()
-            for i in range(top_count):
-                top = self.tree_sorted.topLevelItem(i)
-                board_name = top.text(0) if top else ""
-                if boards_sel is not None and board_name not in boards_sel:
+        headers = [label for (label, _) in selected_fields]
+        rows = []
+        for abs_path, rec in _iter_sorted_items():
+            try:
+                data = rec.get("data", {}) if isinstance(rec, dict) else {}
+                b = data.get("board")
+                if b not in boards_sel:
                     continue
-                for j in range(top.childCount()):
-                    ch = top.child(j)
-                    p = ch.data(0, Qt.UserRole + 1)
-                    if p:
-                        paths.append(Path(p))
-        except Exception:
-            pass
-    
-        if not paths:
-            QMessageBox.information(self, "Export", "No data in Sorted DB to export.")
-            return
-    
-        for p in paths:
-            rec = self.sorted_db.get(p)
-            if not rec:
+                row = [str(data.get(k, "") or "") for (_, k) in selected_fields]
+                rows.append(row)
+            except Exception:
                 continue
-            data = rec.get("data", {}) or {}
-            board_val = rec.get("board") or data.get("board") or ""
-            # provide 'file_name' virtual key
-            data = dict(data)
-            data["file_name"] = p.name
-            data["board"] = board_val
     
-            row: list[str] = []
-            for (_lbl, key) in fields:
-                val = data.get(key, "")
-                row.append("" if val is None else str(val))
-            rows.append(row)
-    
-        if not rows:
-            QMessageBox.information(self, "Export", "No DB records found for current dataset/filters.")
-            return
-    
-        # === Save path (one dialog like Overview; base name composed from boards + timestamp) ===
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        if boards_sel is None or not boards_sel:
-            suffix = "all"
-        else:
-            suffix = "+".join(boards_sel[:3])
-            if len(boards_sel) > 3:
-                suffix += "+more"
-        base_name = f"export-{suffix}-{ts}".replace(" ", "_")
-    
-        # Default extension = first chosen format
-        first_ext = formats[0]
-        default_name = f"{base_name}.{first_ext}"
-    
-        path, _ = QFileDialog.getSaveFileName(self, "Save export as…", default_name, "All files (*.*)")
+        now = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename_base = f"sorted_export_{now}"
+        dlg_dir = os.getcwd()
+        path, _ = QFileDialog.getSaveFileName(self, "Save export", os.path.join(dlg_dir, filename_base + ".xlsx"),
+                                              "XLSX (*.xlsx);;CSV (*.csv);;TXT (*.txt)")
         if not path:
             return
     
-        base_no_ext, _sep, _ext = path.rpartition(".")
-        if not base_no_ext:
-            base_no_ext = path  # no dot
+        if fmt_xlsx:
+            self._export_to_xlsx(path if path.lower().endswith(".xlsx") else path + ".xlsx", headers, rows)
+        if fmt_csv:
+            self._export_to_csv(path if path.lower().endswith(".csv") else path + ".csv", headers, rows)
+        if fmt_txt:
+            self._export_to_txt(path if path.lower().endswith(".txt") else path + ".txt", headers, rows)
     
-        # === Write all requested formats, using SAME helpers as Overview ===
-        ok, errs = [], []
-        for fmt in formats:
-            target = f"{base_no_ext}.{fmt}"
-            try:
-                if fmt == "xlsx":
-                    self._export_to_xlsx(target, headers, rows)
-                elif fmt == "csv":
-                    self._export_to_csv(target, headers, rows)
-                elif fmt == "txt":
-                    self._export_to_txt(target, headers, rows)
-                ok.append(target)
-            except Exception as e:
-                errs.append(f"{fmt.upper()}: {e}")
-    
-        if ok:
-            try:
-                self.statusBar().showMessage("Export done.")
-            except Exception:
-                pass
-            QMessageBox.information(self, "Export", "Exported:\n" + "\n".join(ok))
-        if errs:
-            QMessageBox.warning(self, "Export (some errors)", "Failed:\n" + "\n".join(errs))
+        QMessageBox.information(self, "Export", "Export finished.")
         
     def rescan_sorted(self) -> None:
+        """
+        Sestaví strom 'Sorted PDFs' z DB (edited i parsed).
+        Do UserRole ukládá DB klíč (relativní cesta v rámci sorted_root) a také absolutní
+        cestu v sorted_root pro případ exportů. Nepoužívá SortedDb.boards().
+        """
+        from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QTreeWidgetItem
         from pathlib import Path
-        from app.pdf_scanner import PdfScanner
     
-        root = self.sorted_root
         self.tree_sorted.clear()
     
-        if not root.exists():
+        sorted_root = getattr(self.sorted_db, "sorted_root", None)
+        sorted_root = Path(sorted_root).resolve() if sorted_root else None
+    
+        # Iterace položek z DB
+        def _iter_sorted_items():
+            it = getattr(self.sorted_db, "iter_items", None)
+            if callable(it):
+                # očekáváme, že iter_items() vrací (abs_sorted_path, record)
+                yield from it()
+                return
+            # fallback: pokud SortedDb nemá iter_items a má .items() s klíči = relativním klíčem
             try:
-                self.statusBar().showMessage("Sorted PDFs root not found.")
+                for rel_key, rec in self.sorted_db.items():
+                    abs_sorted = (sorted_root / rel_key).resolve() if sorted_root else Path(rel_key).resolve()
+                    yield abs_sorted, rec
             except Exception:
-                pass
-            return
+                return
     
-        # 1) Naparsuj celý kořen Sorted PDFs
-        scanner = PdfScanner(root)
-        parsed_records = scanner.scan()  # List[PdfRecord]
+        root_items: dict[str, QTreeWidgetItem] = {}
     
-        # 2) Upsert do DB (nepřepisuj edited=True)
-        for rec in parsed_records:
+        def _ensure_board_node(board_name: str) -> QTreeWidgetItem:
+            node = root_items.get(board_name)
+            if node is None:
+                node = QTreeWidgetItem([board_name])
+                node.setData(0, Qt.UserRole, None)
+                self.tree_sorted.addTopLevelItem(node)
+                root_items[board_name] = node
+            return node
+    
+        for abs_sorted_path, rec in _iter_sorted_items():
             try:
-                board = getattr(rec, "board", "") or ""
-                path: Path = getattr(rec, "path")
-                file_name = path.name
-                # převod dat – použij dataclass->dict
-                from dataclasses import asdict
-                data = asdict(rec)
-                self.sorted_db.upsert_parsed(path, board, file_name, data)
+                if isinstance(abs_sorted_path, str):
+                    abs_sorted_path = Path(abs_sorted_path)
+                data = rec.get("data", {}) if isinstance(rec, dict) else {}
+                board = data.get("board") or abs_sorted_path.parent.name
+                name = data.get("file_name") or abs_sorted_path.name
+    
+                # DB klíč = cesta relativně k sorted_root, pokud existuje
+                db_key = None
+                if sorted_root:
+                    try:
+                        db_key = str(abs_sorted_path.resolve().relative_to(sorted_root))
+                    except Exception:
+                        db_key = None
+    
+                parent = _ensure_board_node(board)
+                child = QTreeWidgetItem([name])
+                # UserRole: uložíme DB klíč (který očekává SortedDb.get/key_for)
+                # a navíc ABS path v sorted_root (pro případné exporty).
+                child.setData(0, Qt.UserRole, db_key or "")
+                child.setData(0, Qt.UserRole + 1, str(abs_sorted_path.resolve()))
+                parent.addChild(child)
             except Exception:
                 continue
     
-        self.sorted_db.save()
-    
-        # 3) Postav strom Board → PDF z FS
-        boards: dict[str, list[Path]] = {}
-        for board_dir in root.iterdir():
-            if not board_dir.is_dir():
-                continue
-            if board_dir.name == "__archive__":
-                continue
-            # všechny PDF rekurzivně
-            pdfs = [p for p in board_dir.rglob("*.pdf")]
-            if not pdfs:
-                continue
-            boards[board_dir.name] = sorted(pdfs, key=lambda p: p.name.lower())
-    
-        for board_name in sorted(boards.keys(), key=str.lower):
-            top = QTreeWidgetItem([board_name])
-            top.setData(0, Qt.UserRole + 1, None)  # board item
-            self.tree_sorted.addTopLevelItem(top)
-            for p in boards[board_name]:
-                child = QTreeWidgetItem([p.name])
-                child.setData(0, Qt.UserRole + 1, str(p.resolve()))
-                top.addChild(child)
-            top.setExpanded(True)
-    
-        try:
-            self.statusBar().showMessage(f"Sorted PDFs: {sum(len(v) for v in boards.values())} files in {len(boards)} boards.")
-        except Exception:
-            pass
+        self.tree_sorted.expandAll()
 
     def _sorted_db_path(self) -> Path:
         return self.sorted_db.db_path
@@ -3353,26 +3251,42 @@ class MainWindow(QMainWindow):
         return self.sorted_db.key_for(abs_path)
     
     def _sorted_on_item_changed(self) -> None:
+        """Výběr ve stromu 'Sorted PDFs' → ulož kontext a naplň detail."""
+        from pathlib import Path
+        from PySide6.QtCore import Qt
+    
         sel = self.tree_sorted.selectedItems()
         if not sel:
-            return
-        item = sel[0]
-        p = item.data(0, Qt.UserRole + 1)
-        if not p:
-            # vybrán pouze board – vymaž detaily
             self._sorted_fill_details(None)
             return
-        from pathlib import Path
-        self._sorted_fill_details(Path(p))
+    
+        item = sel[0]
+        parent = item.parent()
+        board = parent.text(0) if parent else ""
+        file_name = item.text(0)
+    
+        db_key = item.data(0, Qt.UserRole)            # relativní klíč vůči sorted_root
+        abs_sorted = item.data(0, Qt.UserRole + 1)    # absolutní cesta v 'Sorted PDFs'
+    
+        # ulož pro _sorted_fill_details
+        self._sorted_sel_db_key = db_key or ""
+        self._sorted_sel_abs_sorted = abs_sorted or ""
+        self._sorted_sel_board = board or ""
+        self._sorted_sel_file_name = file_name or ""
+    
+        # preferuj ABS cestu v sorted_root, ale vlastní naplnění si ještě dopočítá kandidátní cesty
+        self._sorted_fill_details(Path(abs_sorted) if abs_sorted else None)
     
     def _sorted_fill_details(self, abs_path: Optional[Path]) -> None:
-        def _set(txt_widget, val: str):
-            if hasattr(txt_widget, "setPlainText"):
-                txt_widget.setPlainText(val or "")
-            else:
-                txt_widget.setText(val or "")
+        from pathlib import Path
     
-        if abs_path is None:
+        def _set(w, val: str):
+            if hasattr(w, "setPlainText"):
+                w.setPlainText(val or "")
+            else:
+                w.setText(val or "")
+    
+        def _blank():
             for w in (self.ed_board, self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
                       self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname, self.ed_email,
                       self.ed_phone, self.ed_address, self.ed_syllabi, self.ed_courses,
@@ -3381,79 +3295,163 @@ class MainWindow(QMainWindow):
                       self.ed_receiving_member_board, self.ed_date_received,
                       self.ed_validity_start_date, self.ed_validity_end_date):
                 _set(w, "")
-            if hasattr(self, "ed_filename"):
-                _set(self.ed_filename, "")
+            _set(self.ed_filename, "")
             self._sorted_set_editable(False)
             self._sorted_set_status(None)
-            return
     
-        rec = self.sorted_db.get(abs_path)
-        data = None
-        edited = False
-        board = ""
-        file_name = abs_path.name
+        if abs_path is None:
+            # zkusí si ještě složit kandidáty z uloženého kontextu
+            pass
     
-        if rec:
-            data = rec.get("data", {})
-            edited = bool(rec.get("edited"))
-            board = str(data.get("board") or "")
-        else:
-            from app.pdf_scanner import PdfScanner
-            scanner = PdfScanner(abs_path.parent)
+        # 1) načti DB, pokud to jde (pouze pokud je cesta v sorted_root)
+        rec = None
+        try:
+            if abs_path is not None:
+                rec = self.sorted_db.get(abs_path)  # může vyžadovat path pod sorted_root
+        except Exception:
+            rec = None
+    
+        data = rec.get("data", {}) if rec else {}
+    
+        # 2) sestav KANDIDÁTNÍ cesty k PDF v pořadí:
+        #    a) původní cesta uložená v DB (data["path"])
+        #    b) absolutní cesta v sorted_root (UserRole+1 / abs_path)
+        #    c) odvozená cesta: pdf_root / <board> / <file_name>
+        candidates: list[Path] = []
+        if isinstance(data, dict):
+            p = data.get("path")
+            if p:
+                try:
+                    pp = Path(p)
+                    candidates.append(pp)
+                except Exception:
+                    pass
+    
+        if abs_path:
+            candidates.append(abs_path)
+    
+        try:
+            board = getattr(self, "_sorted_sel_board", "") or ""
+            fname = getattr(self, "_sorted_sel_file_name", "") or ""
+            if getattr(self, "pdf_root", None) and board and fname:
+                p3 = Path(self.pdf_root) / board / fname
+                candidates.append(p3)
+        except Exception:
+            pass
+    
+        # 3) pokud je DB nekompletní nebo prázdná, zkus parse prvního existujícího kandidáta
+        REQUIRED_KEYS = [
+            "board", "application_type", "institution_name", "candidate_name",
+            "recognition_academia", "recognition_certified",
+            "contact_full_name", "contact_email", "contact_phone", "contact_postal_address",
+            "syllabi_integration_description", "courses_modules_list",
+            "proof_of_istqb_certifications", "university_links", "additional_information_documents",
+            "printed_name_title", "signature_date",
+            "receiving_member_board", "date_received",
+            "validity_start_date", "validity_end_date",
+            "file_name",
+        ]
+    
+        def _is_incomplete(d: dict) -> bool:
+            if not d:
+                return True
+            for k in REQUIRED_KEYS:
+                if k not in d:  # klíč chybí → doplnit z parsingu
+                    return True
+            return False
+    
+        merged = dict(data) if isinstance(data, dict) else {}
+    
+        if _is_incomplete(merged):
             try:
-                # jen parse konkrétního souboru
-                for r in scanner.scan():
-                    if getattr(r, "path", None) and Path(r.path).resolve() == abs_path.resolve():
-                        from dataclasses import asdict
-                        data = asdict(r)
-                        board = getattr(r, "board", "") or abs_path.parent.name
-                        break
+                from app.pdf_scanner import PdfScanner
+                from dataclasses import asdict
+                # projdi kandidáty, první existující zparsuj a doplň chybějící klíče
+                for cand in candidates:
+                    try:
+                        if not cand:
+                            continue
+                        cpath = Path(cand).resolve()
+                        if not cpath.exists():
+                            continue
+                        for r in PdfScanner(cpath.parent).scan():
+                            try:
+                                rp = Path(r.path).resolve() if getattr(r, "path", None) else None
+                            except Exception:
+                                rp = None
+                            if rp and rp == cpath:
+                                parsed = asdict(r)
+                                # slouč: existující DB hodnoty nechme, doplňme jen chybějící
+                                for k, v in parsed.items():
+                                    if (k not in merged) or (merged.get(k) in (None, "")):
+                                        merged[k] = v
+                                break
+                        if not _is_incomplete(merged):
+                            break
+                    except Exception:
+                        continue
             except Exception:
-                data = {}
+                pass  # když parse selže, zobrazíme co je
     
-        # Naplň UI (prázdné zůstanou prázdné)
-        _set(self.ed_board, board)
-        _set(self.ed_app_type, str(data.get("application_type", "")))
-        _set(self.ed_inst_name, str(data.get("institution_name", "")))
-        _set(self.ed_cand_name, str(data.get("candidate_name", "")))
-        _set(self.ed_rec_acad, str(data.get("recognition_academia", "")))
-        _set(self.ed_rec_cert, str(data.get("recognition_certified", "")))
-        _set(self.ed_fullname, str(data.get("contact_full_name", "")))
-        _set(self.ed_email, str(data.get("contact_email", "")))
-        _set(self.ed_phone, str(data.get("contact_phone", "")))
-        _set(self.ed_address, str(data.get("contact_postal_address", "")))
-        _set(self.ed_syllabi, str(data.get("syllabi_integration_description", "")))
-        _set(self.ed_courses, str(data.get("courses_modules_list", "")))
-        _set(self.ed_proof, str(data.get("proof_of_istqb_certifications", "")))
-        _set(self.ed_links, str(data.get("university_links", "")))
-        _set(self.ed_additional, str(data.get("additional_information_documents", "")))
-        _set(self.ed_printed_name_title, str(data.get("printed_name_title", "")))
-        _set(self.ed_sigdate, str(data.get("signature_date", "")))
-        _set(self.ed_receiving_member_board, str(data.get("receiving_member_board", "")))
-        _set(self.ed_date_received, str(data.get("date_received", "")))
-        _set(self.ed_validity_start_date, str(data.get("validity_start_date", "")))
-        _set(self.ed_validity_end_date, str(data.get("validity_end_date", "")))
-        if hasattr(self, "ed_filename"):
-            _set(self.ed_filename, file_name)
+        # 4) Naplň UI — prázdné zůstává prázdné
+        def get(k: str) -> str:
+            return "" if not merged else str(merged.get(k, "") or "")
+    
+        _set(self.ed_board, get("board"))
+        _set(self.ed_app_type, get("application_type"))
+        _set(self.ed_inst_name, get("institution_name"))
+        _set(self.ed_cand_name, get("candidate_name"))
+        _set(self.ed_rec_acad, get("recognition_academia"))
+        _set(self.ed_rec_cert, get("recognition_certified"))
+        _set(self.ed_fullname, get("contact_full_name"))
+        _set(self.ed_email, get("contact_email"))
+        _set(self.ed_phone, get("contact_phone"))
+        _set(self.ed_address, get("contact_postal_address"))
+        _set(self.ed_syllabi, get("syllabi_integration_description"))
+        _set(self.ed_courses, get("courses_modules_list"))
+        _set(self.ed_proof, get("proof_of_istqb_certifications"))
+        _set(self.ed_links, get("university_links"))
+        _set(self.ed_additional, get("additional_information_documents"))
+        _set(self.ed_printed_name_title, get("printed_name_title"))
+        _set(self.ed_sigdate, get("signature_date"))
+        _set(self.ed_receiving_member_board, get("receiving_member_board"))
+        _set(self.ed_date_received, get("date_received"))
+        _set(self.ed_validity_start_date, get("validity_start_date"))
+        _set(self.ed_validity_end_date, get("validity_end_date"))
+        # File name: vždy smysluplná hodnota
+        fname = merged.get("file_name") if isinstance(merged, dict) else None
+        if not fname:
+            try:
+                fname = getattr(self, "_sorted_sel_file_name", "") or (abs_path.name if abs_path else "")
+            except Exception:
+                fname = ""
+        _set(self.ed_filename, fname)
     
         self._sorted_set_editable(False)
-        self._sorted_set_status("Edited" if edited else "Parsed (unmodified)")
-        self._sorted_current_path = abs_path
+        self._sorted_set_status("Edited" if (rec and rec.get("edited")) else "Parsed (unmodified)")
+        self._sorted_current_path = abs_path if abs_path else None
     
     def _sorted_set_status(self, txt: Optional[str]) -> None:
         self.lbl_sorted_status.setText("—" if not txt else txt)
     
     def _sorted_set_editable(self, can_edit: bool) -> None:
         # Board a File name necháme read-only; ostatní podle can_edit
-        for w in (self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
-                  self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname,
-                  self.ed_email, self.ed_phone,
-                  self.ed_printed_name_title, self.ed_sigdate,
-                  self.ed_receiving_member_board, self.ed_date_received,
-                  self.ed_validity_start_date, self.ed_validity_end_date):
+        ro_lines = (self.ed_board, self.ed_filename)
+        for w in ro_lines:
+            w.setReadOnly(True)
+    
+        lines = (self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
+                 self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname,
+                 self.ed_email, self.ed_phone,
+                 self.ed_printed_name_title, self.ed_sigdate,
+                 self.ed_receiving_member_board, self.ed_date_received,
+                 self.ed_validity_start_date, self.ed_validity_end_date)
+        for w in lines:
             w.setReadOnly(not can_edit)
-        for w in (self.ed_address, self.ed_syllabi, self.ed_courses,
-                  self.ed_proof, self.ed_links, self.ed_additional):
+    
+        texts = (self.ed_address, self.ed_syllabi, self.ed_courses,
+                 self.ed_proof, self.ed_links, self.ed_additional)
+        for w in texts:
             w.setReadOnly(not can_edit)
 
     def _sorted_save_changes(self) -> None:
