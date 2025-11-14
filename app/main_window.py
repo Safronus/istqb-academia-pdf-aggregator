@@ -2886,67 +2886,75 @@ class MainWindow(QMainWindow):
 
     def _build_sorted_tab(self) -> None:
         """
-        Záložka 'Sorted PDFs': vlevo strom, vpravo formulář.
-        Přidány editory pro: Printed Name, Title; Receiving Member Board; Date Received; Validity Start/End.
+        UI pro 'Sorted PDFs': vlevo strom, vpravo formulář.
+        Rozšířeno o pole 'File name' (read-only), nic dalšího se nemění.
         """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
             QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy
         )
-        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtCore import Qt
     
         layout = QVBoxLayout()
         self.split_sorted = QSplitter(self.sorted_tab)
         self.split_sorted.setOrientation(Qt.Horizontal)
     
-        # LEVÁ strana – strom
+        # Levý strom
         self.tree_sorted = QTreeWidget()
         self.tree_sorted.setHeaderLabels(["Board / PDF"])
         self.tree_sorted.itemSelectionChanged.connect(self._sorted_on_item_changed)
     
-        # PRAVÁ strana – formulář
+        # Pravý formulář
         right = QWidget()
         right_layout = QVBoxLayout(right)
         self.form_sorted = QFormLayout()
-        self.form_sorted.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.form_sorted.setFormAlignment(Qt.AlignTop)
+        self.form_sorted.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
         self.form_sorted.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     
-        def _mkline() -> QLineEdit:
-            e = QLineEdit()
-            e.setClearButtonEnabled(True)
-            return e
-        def _mktxt() -> QPlainTextEdit:
-            t = QPlainTextEdit()
-            t.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            t.setMaximumBlockCount(100000)
-            return t
+        def _line() -> QLineEdit:
+            le = QLineEdit()
+            le.setMinimumHeight(36)
+            le.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            le.setClearButtonEnabled(True)
+            return le
     
-        # Základní pole
-        self.ed_board = _mkline(); self.ed_board.setReadOnly(True)
-        self.ed_app_type = _mkline()
-        self.ed_inst_name = _mkline()
-        self.ed_cand_name = _mkline()
-        self.ed_rec_acad = _mkline()
-        self.ed_rec_cert = _mkline()
-        self.ed_fullname = _mkline()
-        self.ed_email = _mkline()
-        self.ed_phone = _mkline()
-        self.ed_address = _mktxt()
-        self.ed_syllabi = _mktxt()
-        self.ed_courses = _mktxt()
-        self.ed_proof = _mktxt()
-        self.ed_links = _mktxt()
-        self.ed_additional = _mktxt()
-        # Consent
-        self.ed_printed_name_title = _mkline()   # NOVĚ
-        self.ed_sigdate = _mkline()
-        # ISTQB internal
-        self.ed_receiving_member_board = _mkline()  # NOVĚ
-        self.ed_date_received = _mkline()           # NOVĚ
-        self.ed_validity_start_date = _mkline()     # NOVĚ
-        self.ed_validity_end_date = _mkline()       # NOVĚ
+        def _pte() -> QPlainTextEdit:
+            p = QPlainTextEdit()
+            p.setMinimumHeight(96)
+            p.setMaximumHeight(220)
+            p.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            return p
     
-        # Alias (stávající jména používaná jinde v kódu nechávám)
+        # Jednořádkové
+        self.ed_board = _line(); self.ed_board.setReadOnly(True)
+        self.ed_app_type = _line()
+        self.ed_inst_name = _line()
+        self.ed_cand_name = _line()
+        self.ed_rec_acad = _line()
+        self.ed_rec_cert = _line()
+        self.ed_fullname = _line()
+        self.ed_email = _line()
+        self.ed_phone = _line()
+        # Consent + ISTQB internal
+        self.ed_printed_name_title = _line()
+        self.ed_sigdate = _line()
+        self.ed_receiving_member_board = _line()
+        self.ed_date_received = _line()
+        self.ed_validity_start_date = _line()
+        self.ed_validity_end_date = _line()
+        # File name (NOVĚ)
+        self.ed_filename = _line(); self.ed_filename.setReadOnly(True)
+    
+        # Víceřádkové
+        self.ed_address = _pte()
+        self.ed_syllabi = _pte()
+        self.ed_courses = _pte()
+        self.ed_proof = _pte()
+        self.ed_links = _pte()
+        self.ed_additional = _pte()
+    
+        # Alias názvů (beze změny)
         self.ed_contact_full_name = self.ed_fullname
         self.ed_contact_email = self.ed_email
         self.ed_contact_phone = self.ed_phone
@@ -2957,7 +2965,7 @@ class MainWindow(QMainWindow):
         self.ed_university_links = self.ed_links
         self.ed_additional_information_documents = self.ed_additional
     
-        # Form – pořadí (Printed Name před Signature Date; sekce 7 za ním)
+        # Pořadí
         self.form_sorted.addRow("Board:", self.ed_board)
         self.form_sorted.addRow("Application Type:", self.ed_app_type)
         self.form_sorted.addRow("Institution Name:", self.ed_inst_name)
@@ -2981,8 +2989,8 @@ class MainWindow(QMainWindow):
         self.form_sorted.addRow("Date Received:", self.ed_date_received)
         self.form_sorted.addRow("Validity Start Date:", self.ed_validity_start_date)
         self.form_sorted.addRow("Validity End Date:", self.ed_validity_end_date)
-    
-        right_layout.addLayout(self.form_sorted)
+        # File (NOVĚ)
+        self.form_sorted.addRow("File name:", self.ed_filename)
     
         # Tlačítka
         btn_row = QHBoxLayout()
@@ -3002,10 +3010,9 @@ class MainWindow(QMainWindow):
         self.btn_sorted_export.clicked.connect(self.export_sorted_db)
         self.btn_sorted_rescan.clicked.connect(self.rescan_sorted)
     
-        # Výchozí – read-only; Board vždy read-only
+        # Výchozí read-only
         self._sorted_set_editable(False)
     
-        # Osazení splitteru a layoutu
         self.split_sorted.addWidget(self.tree_sorted)
         self.split_sorted.addWidget(right)
         self.split_sorted.setStretchFactor(0, 2)
@@ -3359,7 +3366,6 @@ class MainWindow(QMainWindow):
         self._sorted_fill_details(Path(p))
     
     def _sorted_fill_details(self, abs_path: Optional[Path]) -> None:
-        # Vyčisti helper
         def _set(txt_widget, val: str):
             if hasattr(txt_widget, "setPlainText"):
                 txt_widget.setPlainText(val or "")
@@ -3373,9 +3379,10 @@ class MainWindow(QMainWindow):
                       self.ed_proof, self.ed_links, self.ed_additional,
                       self.ed_printed_name_title, self.ed_sigdate,
                       self.ed_receiving_member_board, self.ed_date_received,
-                      self.ed_validity_start_date, self.ed_validity_end_date,
-                      self.ed_filename):
+                      self.ed_validity_start_date, self.ed_validity_end_date):
                 _set(w, "")
+            if hasattr(self, "ed_filename"):
+                _set(self.ed_filename, "")
             self._sorted_set_editable(False)
             self._sorted_set_status(None)
             return
@@ -3394,8 +3401,8 @@ class MainWindow(QMainWindow):
             from app.pdf_scanner import PdfScanner
             scanner = PdfScanner(abs_path.parent)
             try:
-                parsed = scanner.scan()
-                for r in parsed:
+                # jen parse konkrétního souboru
+                for r in scanner.scan():
                     if getattr(r, "path", None) and Path(r.path).resolve() == abs_path.resolve():
                         from dataclasses import asdict
                         data = asdict(r)
@@ -3404,6 +3411,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 data = {}
     
+        # Naplň UI (prázdné zůstanou prázdné)
         _set(self.ed_board, board)
         _set(self.ed_app_type, str(data.get("application_type", "")))
         _set(self.ed_inst_name, str(data.get("institution_name", "")))
@@ -3425,7 +3433,8 @@ class MainWindow(QMainWindow):
         _set(self.ed_date_received, str(data.get("date_received", "")))
         _set(self.ed_validity_start_date, str(data.get("validity_start_date", "")))
         _set(self.ed_validity_end_date, str(data.get("validity_end_date", "")))
-        _set(self.ed_filename, file_name)
+        if hasattr(self, "ed_filename"):
+            _set(self.ed_filename, file_name)
     
         self._sorted_set_editable(False)
         self._sorted_set_status("Edited" if edited else "Parsed (unmodified)")
@@ -3459,6 +3468,15 @@ class MainWindow(QMainWindow):
         def _get(w):
             return w.toPlainText() if hasattr(w, "toPlainText") else w.text()
     
+        file_name_value = None
+        if hasattr(self, "ed_filename"):
+            try:
+                file_name_value = _get(self.ed_filename).strip()
+            except Exception:
+                file_name_value = None
+        if not file_name_value:
+            file_name_value = Path(abs_path).name  # fallback, aby to nikdy nepadalo
+    
         new_data = {
             "board": self.ed_board.text().strip(),
             "application_type": _get(self.ed_app_type).strip(),
@@ -3475,7 +3493,7 @@ class MainWindow(QMainWindow):
             "proof_of_istqb_certifications": _get(self.ed_proof).strip(),
             "university_links": _get(self.ed_links).strip(),
             "additional_information_documents": _get(self.ed_additional).strip(),
-            # nové
+            # NOVÁ POLE
             "printed_name_title": _get(self.ed_printed_name_title).strip(),
             "signature_date": _get(self.ed_sigdate).strip(),
             "receiving_member_board": _get(self.ed_receiving_member_board).strip(),
@@ -3483,7 +3501,7 @@ class MainWindow(QMainWindow):
             "validity_start_date": _get(self.ed_validity_start_date).strip(),
             "validity_end_date": _get(self.ed_validity_end_date).strip(),
             # meta
-            "file_name": _get(self.ed_filename).strip(),
+            "file_name": file_name_value,
             "path": str(Path(abs_path).resolve()),
         }
     
