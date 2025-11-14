@@ -2888,13 +2888,13 @@ class MainWindow(QMainWindow):
         """
         Záložka 'Sorted PDFs': vlevo strom, vpravo formulář.
         Přidány editory pro: Printed Name, Title; Receiving Member Board; Date Received; Validity Start/End.
-        Navíc přidán řádek 'File name' (read-only), aby nepadalo _sorted_fill_details().
+        DOPLNĚNO: File name (read-only) + lbl_sorted_status.
         """
         from PySide6.QtWidgets import (
             QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QSplitter,
-            QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy
+            QWidget, QFormLayout, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy, QLabel
         )
-        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtCore import Qt
     
         layout = QVBoxLayout()
         self.split_sorted = QSplitter(self.sorted_tab)
@@ -2904,6 +2904,9 @@ class MainWindow(QMainWindow):
         self.tree_sorted = QTreeWidget()
         self.tree_sorted.setHeaderLabels(["Board / PDF"])
         self.tree_sorted.itemSelectionChanged.connect(self._sorted_on_item_changed)
+        # Abecední řazení (boards i soubory)
+        self.tree_sorted.setSortingEnabled(True)
+        self.tree_sorted.sortItems(0, Qt.AscendingOrder)
     
         # PRAVÁ strana – formulář
         right = QWidget()
@@ -2916,6 +2919,7 @@ class MainWindow(QMainWindow):
             e = QLineEdit()
             e.setClearButtonEnabled(True)
             return e
+    
         def _mktxt() -> QPlainTextEdit:
             t = QPlainTextEdit()
             t.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -2946,8 +2950,9 @@ class MainWindow(QMainWindow):
         self.ed_date_received = _mkline()           # NOVĚ
         self.ed_validity_start_date = _mkline()     # NOVĚ
         self.ed_validity_end_date = _mkline()       # NOVĚ
-        # File name (read-only, aby se necrashovalo)
-        self.ed_filename = _mkline(); self.ed_filename.setReadOnly(True)
+        # File name (read-only) – DOPLNĚNO
+        self.ed_filename = _mkline()
+        self.ed_filename.setReadOnly(True)
     
         # Alias (stávající jména používaná jinde v kódu nechávám)
         self.ed_contact_full_name = self.ed_fullname
@@ -2961,6 +2966,7 @@ class MainWindow(QMainWindow):
         self.ed_additional_information_documents = self.ed_additional
     
         # Form – pořadí (Printed Name před Signature Date; sekce 7 za ním)
+        self.form_sorted.addRow("File name:", self.ed_filename)  # DOPLNĚNO – read-only
         self.form_sorted.addRow("Board:", self.ed_board)
         self.form_sorted.addRow("Application Type:", self.ed_app_type)
         self.form_sorted.addRow("Institution Name:", self.ed_inst_name)
@@ -2984,17 +2990,18 @@ class MainWindow(QMainWindow):
         self.form_sorted.addRow("Date Received:", self.ed_date_received)
         self.form_sorted.addRow("Validity Start Date:", self.ed_validity_start_date)
         self.form_sorted.addRow("Validity End Date:", self.ed_validity_end_date)
-        # File name
-        self.form_sorted.addRow("File name:", self.ed_filename)
     
         right_layout.addLayout(self.form_sorted)
     
-        # Tlačítka
+        # Tlačítka + stav (DOPLNĚNO lbl_sorted_status)
         btn_row = QHBoxLayout()
+        self.lbl_sorted_status = QLabel("—")  # DOPLNĚNO: používá _sorted_set_status(...)
         self.btn_sorted_edit = QPushButton("Edit")
         self.btn_sorted_save = QPushButton("Save to DB")
         self.btn_sorted_export = QPushButton("Export…")
         self.btn_sorted_rescan = QPushButton("Rescan Sorted")
+        btn_row.addWidget(self.lbl_sorted_status)   # jemný status vlevo
+        btn_row.addSpacing(12)
         btn_row.addWidget(self.btn_sorted_edit)
         btn_row.addWidget(self.btn_sorted_save)
         btn_row.addStretch(1)
@@ -3007,7 +3014,7 @@ class MainWindow(QMainWindow):
         self.btn_sorted_export.clicked.connect(self.export_sorted_db)
         self.btn_sorted_rescan.clicked.connect(self.rescan_sorted)
     
-        # Výchozí – read-only; Board/File name vždy read-only
+        # Výchozí – read-only; Board a File name vždy read-only
         self._sorted_set_editable(False)
     
         # Osazení splitteru a layoutu
