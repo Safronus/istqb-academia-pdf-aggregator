@@ -143,6 +143,12 @@ class PdfScanner:
         extra: Dict[str, Optional[str]] = {}
         try:
             extra = parse_istqb_academia_application(text or "", fields or {})
+            
+            # fallbacky (jen když jsou prázdná AcroForm pole)
+            if not uni_links:
+                uni_links = (extra.get("university_links") or "")
+            if not addl_info:
+                addl_info = (extra.get("additional_information_documents") or "")
         except Exception:
             extra = {}
 
