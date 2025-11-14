@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.11q  
+**Aktuální verze:** 0.11s  
 **Datum vydání:** 2025-11-14  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -79,13 +79,13 @@ Získávání probíhá **pouze z AcroForm polí**; když pole v PDF chybí, hod
 - `Printed Name, Title` je **před** `Signature Date`.
 - Sekce 7 (`Receiving Member Board`, `Date Received`, `Validity Start Date`, `Validity End Date`)
   je sdružena **za** `Signature Date` pod nadpisem *For ISTQB Academia Purpose Only*.
-- Nové sloupce jsou **barevně** odlišeny: blok Consent a blok ISTQB‑internal mají jednotnou barvu.
+- Nové sloupce jsou **barevně** odlišené: blok Consent a blok ISTQB‑internal mají jednotnou barvu.
 - Sloupec **Sorted** zůstal **poslední** a plní se jako dříve (bez změn logiky).
 
 ---
 
 ## Záložka PDF Browser
-- Levý strom zobrazuje **podsložky kořene** a soubory.  
+- Levý strom zobrazuje **podsložky kořene** a soubory (výchozí chování `QFileSystemModel`).  
 - **Abecedné řazení** je zapnuté; po načtení se jemně přizpůsobí šířky sloupců.  
 - Pravý detail je **sdružen do sekcí 1–7** dle formuláře; hlavičky sekcí se vkládají po sestavení formuláře.
 
@@ -95,10 +95,8 @@ Získávání probíhá **pouze z AcroForm polí**; když pole v PDF chybí, hod
 - Levý strom: skupiny podle **Board**, položky = soubory.  
 - Pravý formulář: **všechna** dosavadní pole + nová (Consent + ISTQB‑internal).  
 - `File name` je **read‑only**. `Board` je také read‑only.  
-- Tlačítko **Edit** přepne editovatelnost polí; **Save to DB** uloží změny do `sorted_db.json`.
-
-**Naplnění detailu** je robustní: nejdříve DB (pokud existuje), jinak parsování vybraného PDF.
-Prázdná pole zůstávají prázdná; `Validity End Date` je libovolný text.
+- Tlačítko **Edit** přepne editovatelnost polí; **Save to DB** uloží změny do `sorted_db.json`.  
+- Levý strom je **abecedně seřazen** – **boards** i **PDF soubory**.
 
 ---
 
@@ -122,13 +120,13 @@ Projekt používá schéma **major.minor + patch‑písmeno**. Hlavní verzi nem
 
 ```bash
 # ulož změny
-git add app/main_window.py README.md
+git add app/*.py README.md
 
 # sémantický commit
-git commit -m "fix(browser): call _browser_add_section_headers after building form; keep original model behavior (v0.11q)"
+git commit -m "fix(sorted): add missing 'File name' field and status label; keep alphabetical sorting (v0.11s)"
 
 # tag patch verzi
-git tag -a v0.11q -m "v0.11q"
+git tag -a v0.11s -m "v0.11s"
 
 # push do repozitáře
 git push && git push --tags
@@ -141,9 +139,16 @@ git rev-parse HEAD
 
 ## Changelog od 0.11
 
-### 0.11q — 2025-11-14
-- **PDF Browser:** sekční hlavičky se znovu **vkládají** po sestavení formuláře (`_browser_add_section_headers()` voláno na konci `_build_browser_tab`).  
-  Původní chování modelu zůstává; je zapnuté jen **abecedné řazení**.
+### 0.11s — 2025-11-14
+- **Sorted PDFs:** doplněno chybějící pole **`File name`** (read‑only) a **status label** `lbl_sorted_status` vpravo dole.  
+  Odstraňuje chyby `AttributeError: ed_filename` a `AttributeError: lbl_sorted_status`.  
+  Abecední řazení stromu zůstává zapnuté.
+
+### 0.11r
+- **Sorted PDFs:** strom abecedně řadí boards i PDF soubory (zapnuto `setSortingEnabled(True)` + `sortItems(...)`).
+
+### 0.11q
+- **PDF Browser:** po sestavení pravého formuláře se vkládají **sekční hlavičky** (1–7).
 
 ### 0.11p
 - **PDF Browser:** návrat k výchozímu chování `QFileSystemModel` (bez filtrů), přidáno pouze řazení.
@@ -154,7 +159,8 @@ git rev-parse HEAD
 
 ## Smoke test (rychlé ověření)
 1. Spusť aplikaci s `--root` ke kořeni PDF (adresář s podsložkami boardů).  
-2. V **PDF Browseru** vlevo vidíš strom; klik na PDF → vpravo náhled.  
-3. Ověř, že jsou vidět **hlavičky sekcí 1–7** nad příslušnými bloky.  
-4. V **Overview** a **Sorted** ověř exporty (XLSX/CSV/TXT).  
-5. Prázdné PDF hodnoty zůstávají prázdné; `Validity End Date` je libovolný text.
+2. V **Sorted PDFs** klikni **Rescan Sorted** → top‑level boards i jejich PDF položky jsou abecedně.  
+3. Vyber libovolné PDF v **Sorted PDFs** → pravý formulář ukazuje i **File name** a stav dole.  
+4. V **PDF Browseru** vlevo vidíš strom; klik na PDF → vpravo náhled se sekcemi 1–7.  
+5. Ověř Overview/Sorted exporty (XLSX/CSV/TXT).  
+6. Prázdná PDF pole zůstávají prázdná; `Validity End Date` je libovolný text.
