@@ -224,11 +224,15 @@ def _pdf_text_value(field: dict | None) -> Optional[str]:
 def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | None = None) -> Dict[str, Optional[str]]:
     """
     Parse ISTQB Academia Application PDF.
-    Prefers AcroForm (form_fields) and falls back to text heuristics.
+    Preferuje AcroForm (form_fields); fallback na text heuristikami.
+    NOVĚ: vytahuje i:
+      - printed_name_title (sekce 6 – Declaration and Consent)
+      - receiving_member_board, date_received, validity_start_date, validity_end_date (sekce 7)
     """
-    norm = text.replace("\xa0", " ")
+    norm = (text or "").replace("\xa0", " ")
     lines = [ln.strip() for ln in norm.splitlines() if ln.strip()]
 
+    # --- mapování "key: value" z textu ---
     kv: Dict[str, str] = {}
     for ln in lines:
         m = RE_KV.match(ln)
@@ -236,17 +240,19 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
             k = m.group("k").strip().lower()
             kv[k] = m.group("v").strip()
 
-    # ---------- Prefer AcroForm ----------
+    # ---------- Inicializace ----------
     app_type = None
-    academia = None
-    certified = None
     institution = None
     candidate = None
-    urls = None
+    academia = None
+    certified = None
+
     contact_name = None
     email = None
     phone = None
     postal = None
+
+    urls = None
     signature_date = None
 
     syllabi_desc = None
@@ -254,6 +260,14 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
     proof = None
     additional = None
 
+    # NOVÁ POLE
+    printed_name_title = None
+    receiving_member_board = None
+    date_received = None
+    validity_start_date = None
+    validity_end_date = None
+
+    # ---------- Prefer AcroForm ----------
     if form_fields:
         # Application type (radio)
         f_app = form_fields.get("Application Type")
@@ -262,9 +276,10 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
 
         # Section 2
         institution = _pdf_text_value(form_fields.get("Name of University High or Technical School")) or institution
+        institution = _pdf_text_value(form_fields.get("Name of your academic institution")) or institution
         candidate = _pdf_text_value(form_fields.get("Name of candidate")) or candidate
 
-        # Recognition (checkboxes)
+        # Section 3 – recognitions
         fa = form_fields.get("AcademiaRecognitionCheck")
         if isinstance(fa, dict):
             v = _pdf_name_to_str(fa.get("/V"))
@@ -274,23 +289,40 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
             v = _pdf_name_to_str(fc.get("/V"))
             certified = "Yes" if v and v.lower() == "yes" else ("No" if v else None)
 
-        # Section 4 – Contact details
+        # Section 4 – contacts
         contact_name = _pdf_text_value(form_fields.get("Contact name")) or contact_name
         email = _pdf_text_value(form_fields.get("Contact email")) or email
         phone = _pdf_text_value(form_fields.get("Contact phone")) or phone
         postal = _pdf_text_value(form_fields.get("Postal address")) or postal
 
-        # Section 5 – Eligibility Evidence
+        # Section 5 – eligibility
         syllabi_desc = _pdf_text_value(form_fields.get("Descriptino of how syllabi are integrated")) or syllabi_desc
         courses_modules = _pdf_text_value(form_fields.get("List of courses and modules")) or courses_modules
         proof = _pdf_text_value(form_fields.get("Proof of certifications")) or proof
         urls = _pdf_text_value(form_fields.get("University website links")) or urls
         additional = _pdf_text_value(form_fields.get("Additional relevant information or documents")) or additional
 
-        # Section 6 – Signature date
+        # Section 6 – signature & printed name/title
         signature_date = _pdf_text_value(form_fields.get("Signature Date_af_date")) or signature_date
+        # robustně hledej "Printed Name, Title"
+        for k, v in form_fields.items():
+            key = str(k).strip().lower()
+            if ("printed" in key and "name" in key and "title" in key) or ("name and title" in key):
+                printed_name_title = _pdf_text_value(v) or printed_name_title
 
-    # ---------- Fallbacks from text ----------
+        # Section 7 – ISTQB internal (use only)
+        for k, v in form_fields.items():
+            key = str(k).strip().lower()
+            if ("receiving" in key and "member" in key and "board" in key) or ("member board" in key):
+                receiving_member_board = _pdf_text_value(v) or receiving_member_board
+            elif "date received" in key:
+                date_received = normalize_signature_date(_pdf_text_value(v) or date_received) or date_received
+            elif "validity start" in key:
+                validity_start_date = normalize_signature_date(_pdf_text_value(v) or validity_start_date) or validity_start_date
+            elif "validity end" in key:
+                validity_end_date = normalize_signature_date(_pdf_text_value(v) or validity_end_date) or validity_end_date
+
+    # ---------- Fallbacky z textu ----------
     if not app_type:
         app_type = (
             kv.get("application type")
@@ -298,75 +330,100 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
             or ("New Application" if "New Application" in norm and "Additional Recognition" not in norm else None)
             or ("Additional Recognition" if "Additional Recognition" in norm else None)
         )
-
     if not institution:
         institution = (
             kv.get("name of university high or technical school")
             or kv.get("name of your academic institution")
             or _take_after("Name of University, High-, or Technical School", norm)
         )
-
     if not candidate:
         candidate = kv.get("name of candidate") or _take_after("Name of candidate", norm)
 
+    # checkboxy z textu
     if academia is None:
         a = kv.get("academia recognition") or _take_after("Academia Recognition", norm)
-        a_bool = _bool_from_checkbox(a)
-        academia = "Yes" if a_bool is True else ("No" if a_bool is False else None)
-
+        academia = "Yes" if _bool_from_checkbox(a) else ("No" if a is not None else None)
     if certified is None:
         c = kv.get("certified recognition") or _take_after("Certified Recognition", norm)
-        c_bool = _bool_from_checkbox(c)
-        certified = "Yes" if c_bool is True else ("No" if c_bool is False else None)
+        certified = "Yes" if _bool_from_checkbox(c) else ("No" if c is not None else None)
 
     if contact_name is None:
         contact_name = kv.get("contact name") or kv.get("full name") or _take_after("Full Name", norm)
-
     if email is None:
-        email = kv.get("contact email") or kv.get("email address") or _take_after("Email address", norm)
-        if not email:
-            m = RE_EMAIL.search(norm)
-            email = m.group(0) if m else None
-
+        email = kv.get("email address") or _take_after("Email Address", norm)
     if phone is None:
-        phone = kv.get("contact phone") or kv.get("phone number") or _take_after("Phone number", norm)
-        if not phone:
-            m = RE_PHONE.search(norm)
-            phone = m.group(0) if m else None
-
+        phone = kv.get("phone number") or _take_after("Phone Number", norm)
     if postal is None:
-        postal = kv.get("postal address") or _take_after("Postal address", norm)
+        postal = kv.get("postal address") or _take_after("Postal Address", norm)
+
+    if syllabi_desc is None:
+        syllabi_desc = kv.get("syllabi integration") or _take_after("Descriptino of how syllabi are integrated", norm)
+    if courses_modules is None:
+        courses_modules = kv.get("courses/modules") or kv.get("list of courses and modules") or _take_after("List of courses and modules", norm)
+    if proof is None:
+        proof = kv.get("proof of istqb certifications") or _take_after("Proof of ISTQB certifications", norm)
+    if urls is None:
+        urls = kv.get("university links") or _take_after("University website links", norm)
+    if additional is None:
+        additional = kv.get("additional info/documents") or _take_after("Additional relevant information or documents", norm)
 
     if signature_date is None:
-        signature_date = (
-            kv.get("signature date_af_date")
-            or kv.get("date")
-            or _take_after("Signature Date", norm)
-            or _take_after("Date", norm)
+        # heuristika: hledej v bloku od "6. Declaration and Consent"
+        scope = norm
+        m = re.search(r"\b6\.\s*Declaration.*", scope, flags=re.IGNORECASE | re.DOTALL)
+        if m: scope = m.group(0)
+        raw = (
+            kv.get("signature date")
+            or _take_after("Signature Date", scope)
+            or _take_after("Date", scope)
         )
-        if signature_date:
-            signature_date = signature_date.strip()
+        signature_date = raw
 
-    if proof is None:
-        proof = kv.get("proof of certifications") or kv.get("proof of istqb certifications")
-        if not proof:
-            m = re.search(
-                r"Proof of ISTQB® certifications.*?:\s*(?P<blk>.+?)(?:\n[A-Z][^\n:]+:|\Z)",
-                norm, flags=re.IGNORECASE | re.DOTALL
+    # NOVĚ – Printed Name, Title (sekce 6) z textu
+    if printed_name_title is None:
+        scope6 = norm
+        m = re.search(r"\b6\.\s*Declaration.*", scope6, flags=re.IGNORECASE | re.DOTALL)
+        if m: scope6 = m.group(0)
+        printed_name_title = (
+            kv.get("printed name, title")
+            or kv.get("printed name title")
+            or _take_after("Printed Name, Title", scope6)
+            or _take_after("Name and title", scope6)
+        )
+
+    # NOVĚ – Sekce 7 (Use Only)
+    if receiving_member_board is None or date_received is None or validity_start_date is None or validity_end_date is None:
+        scope7 = norm
+        m7 = re.search(r"\b7\.\s*For\s+ISTQB\s+Academia\s+Use\s+Only.*", scope7, flags=re.IGNORECASE | re.DOTALL)
+        if not m7:
+            # někdy PDF používá "Purpose Only"
+            m7 = re.search(r"\b7\.\s*For\s+ISTQB\s+Academia\s+Purpose\s+Only.*", scope7, flags=re.IGNORECASE | re.DOTALL)
+        if m7:
+            scope7 = m7.group(0)
+        else:
+            scope7 = norm
+
+        if receiving_member_board is None:
+            receiving_member_board = (
+                kv.get("receiving member board")
+                or _take_after("Receiving Member Board", scope7)
+                or _take_after("Member Board", scope7)
             )
-            if m:
-                proof = re.sub(r"\s+", " ", m.group("blk")).strip()
+        if date_received is None:
+            d = kv.get("date received") or _take_after("Date Received", scope7)
+            date_received = normalize_signature_date(d) if d else None
+        if validity_start_date is None:
+            d = kv.get("validity start date") or _take_after("Validity Start Date", scope7)
+            validity_start_date = normalize_signature_date(d) if d else None
+        if validity_end_date is None:
+            d = kv.get("validity end date") or _take_after("Validity End Date", scope7)
+            validity_end_date = normalize_signature_date(d) if d else None
 
-    if urls is None:
-        urls = kv.get("university website links") or None
-
-    # Reasonable fallbacks for syllabi_desc / courses_modules / additional
-    if syllabi_desc is None:
-        syllabi_desc = _take_after("Description of how ISTQB syllabi are integrated in the curriculum", norm)
-    if courses_modules is None:
-        courses_modules = _take_after("List of courses/modules", norm)
-    if additional is None:
-        additional = _take_after("Any additional relevant information or documents", norm)
+    # finální normalizace dat
+    signature_date = normalize_signature_date(signature_date)
+    date_received = normalize_signature_date(date_received)
+    validity_start_date = normalize_signature_date(validity_start_date)
+    validity_end_date = normalize_signature_date(validity_end_date)
 
     return {
         "application_type": app_type,
@@ -378,10 +435,16 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
         "contact_email": email,
         "contact_phone": phone,
         "contact_postal_address": postal,
-        "signature_date": signature_date,
-        "proof_of_istqb_certifications": proof,
-        "university_links": urls,
         "syllabi_integration_description": syllabi_desc,
         "courses_modules_list": courses_modules,
+        "proof_of_istqb_certifications": proof,
+        "university_links": urls,
         "additional_information_documents": additional,
+        "signature_date": signature_date,
+        # NOVÁ POLE
+        "printed_name_title": printed_name_title,
+        "receiving_member_board": receiving_member_board,
+        "date_received": date_received,
+        "validity_start_date": validity_start_date,
+        "validity_end_date": validity_end_date,
     }
