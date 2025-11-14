@@ -3573,97 +3573,127 @@ class MainWindow(QMainWindow):
         vsplit = QSplitter(Qt.Vertical, self.browser_tab)
     
         # Nahoře strom
-        top_widget = QWidget(vsplit)
+        top_widget = QWidget()
         top_layout = QVBoxLayout(top_widget)
     
-        self.fs_model = QFileSystemModel(self)
-        self.fs_model.setRootPath(str(self.pdf_root))
-        self.tree = QTreeView(top_widget)
-        self.tree.setModel(self.fs_model)
-        self.tree.setRootIndex(self.fs_model.index(str(self.pdf_root)))
-        self.tree.setAnimated(True)
-        self.tree.setSortingEnabled(True)
-        header = self.tree.header()
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(80)
-        try:
-            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        except Exception:
-            header.setResizeMode(0, QHeaderView.ResizeToContents)
-        self.tree.doubleClicked.connect(self._open_from_tree)
-        self.tree.selectionModel().selectionChanged.connect(self._tree_selection_changed)
-        top_layout.addWidget(self.tree)
+        self.tree_browser = QTreeView()
+        self.tree_browser.setObjectName("tree_browser")
+        self.tree_browser.setHeaderHidden(False)
+        self.tree_browser.header().setStretchLastSection(True)
+        self.tree_browser.header().setSectionResizeMode(QHeaderView.ResizeToContents)
     
-        # Dole detail
-        bottom_widget = QWidget(vsplit)
+        # QFileSystemModel pro procházení kořene PDF
+        self.fs_model = QFileSystemModel(self.tree_browser)
+        self.fs_model.setRootPath(str(self.pdf_root))
+        self.fs_model.setReadOnly(True)
+        # Bez filtrů – ponecháme původní chování, jen abecedně řadíme
+    
+        self.tree_browser.setModel(self.fs_model)
+        self.tree_browser.setRootIndex(self.fs_model.index(str(self.pdf_root)))
+        self.tree_browser.setSortingEnabled(True)
+        self.tree_browser.sortByColumn(0, Qt.AscendingOrder)
+    
+        self.tree_browser.doubleClicked.connect(self._browser_on_double_clicked)
+        self.tree_browser.selectionModel().selectionChanged.connect(self._browser_on_selection_changed)
+    
+        top_layout.addWidget(self.tree_browser)
+    
+        # Dole detail s formulářem (scrollovatelný)
+        bottom_widget = QWidget()
         bottom_layout = QVBoxLayout(bottom_widget)
     
-        scroll = QScrollArea(bottom_widget)
+        scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        form_host = QWidget(scroll)
-        self.detail_form = QFormLayout(form_host)
-        self.detail_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        self.detail_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        self.detail_form.setFormAlignment(Qt.AlignTop)
-        self.detail_form.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
     
-        def _mklabel() -> QLabel:
-            lab = QLabel("-")
-            lab.setWordWrap(True)
-            lab.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-            return lab
+        form_host = QWidget()
+        form_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.form_browser = QFormLayout(form_host)
+        self.form_browser.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.form_browser.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     
-        # Původní (ponechávám identické názvy)
-        self.lbl_board = getattr(self, "lbl_board", _mklabel())
-        self.lbl_known = getattr(self, "lbl_known", _mklabel())
-        self.lbl_app_type = getattr(self, "lbl_app_type", _mklabel())
-        self.lbl_inst = getattr(self, "lbl_inst", _mklabel())
-        self.lbl_cand = getattr(self, "lbl_cand", _mklabel())
-        self.lbl_acad = getattr(self, "lbl_acad", _mklabel())
-        self.lbl_cert = getattr(self, "lbl_cert", _mklabel())
-        self.lbl_contact = getattr(self, "lbl_contact", _mklabel())
-        self.lbl_email = getattr(self, "lbl_email", _mklabel())
-        self.lbl_phone = getattr(self, "lbl_phone", _mklabel())
-        self.lbl_postal = getattr(self, "lbl_postal", _mklabel())
-        # NOVÉ + původní
-        self.lbl_printed_name_title = getattr(self, "lbl_printed_name_title", _mklabel())
-        self.lbl_date = getattr(self, "lbl_date", _mklabel())  # Signature Date
-        self.lbl_rmb = getattr(self, "lbl_rmb", _mklabel())   # Receiving Member Board
-        self.lbl_date_received = getattr(self, "lbl_date_received", _mklabel())
-        self.lbl_validity_start = getattr(self, "lbl_validity_start", _mklabel())
-        self.lbl_validity_end = getattr(self, "lbl_validity_end", _mklabel())
-        self.lbl_syllabi = getattr(self, "lbl_syllabi", _mklabel())
-        self.lbl_courses = getattr(self, "lbl_courses", _mklabel())
-        self.lbl_proof = getattr(self, "lbl_proof", _mklabel())
-        self.lbl_links = getattr(self, "lbl_links", _mklabel())
-        self.lbl_additional = getattr(self, "lbl_additional", _mklabel())
-        self.lbl_sorted_status = getattr(self, "lbl_sorted_status", _mklabel())
+        # ----- Labely v pravém detailu (jen UI prvky; naplňování jinde) -----
     
-        # Sestavení formuláře (pořadí – Printed Name před Signature Date; sekce 7 za ním)
-        self.detail_form.addRow("Board:", self.lbl_board)
-        self.detail_form.addRow("Application Type:", self.lbl_app_type)
-        self.detail_form.addRow("Institution Name:", self.lbl_inst)
-        self.detail_form.addRow("Candidate Name:", self.lbl_cand)
-        self.detail_form.addRow("Academia Recognition:", self.lbl_acad)
-        self.detail_form.addRow("Certified Recognition:", self.lbl_cert)
-        self.detail_form.addRow("Full Name:", self.lbl_contact)
-        self.detail_form.addRow("Email Address:", self.lbl_email)
-        self.detail_form.addRow("Phone Number:", self.lbl_phone)
-        self.detail_form.addRow("Postal Address:", self.lbl_postal)
-        # Consent
-        self.detail_form.addRow("Printed Name, Title:", self.lbl_printed_name_title)
-        self.detail_form.addRow("Signature Date:", self.lbl_date)
-        # ISTQB internal
-        self.detail_form.addRow("Receiving Member Board:", self.lbl_rmb)
-        self.detail_form.addRow("Date Received:", self.lbl_date_received)
-        self.detail_form.addRow("Validity Start Date:", self.lbl_validity_start)
-        self.detail_form.addRow("Validity End Date:", self.lbl_validity_end)
-        # Dlouhé texty
-        self.detail_form.addRow("Syllabi Integration:", self.lbl_syllabi)
-        self.detail_form.addRow("Courses/Modules:", self.lbl_courses)
-        self.detail_form.addRow("Proof of ISTQB Certifications:", self.lbl_proof)
-        self.detail_form.addRow("University Links:", self.lbl_links)
-        self.detail_form.addRow("Additional Info/Documents:", self.lbl_additional)
+        # Application / Institution / Recognition
+        self.lbl_board = QLabel()
+        self.lbl_app_type = QLabel()
+        self.lbl_inst_name = QLabel()
+        self.lbl_cand_name = QLabel()
+        self.lbl_rec_acad = QLabel()
+        self.lbl_rec_cert = QLabel()
+    
+        self.lbl_board.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_app_type.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_inst_name.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_cand_name.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_rec_acad.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_rec_cert.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    
+        self.form_browser.addRow("Board:", self.lbl_board)
+        self.form_browser.addRow("Application Type:", self.lbl_app_type)
+        self.form_browser.addRow("Institution Name:", self.lbl_inst_name)
+        self.form_browser.addRow("Candidate Name:", self.lbl_cand_name)
+        self.form_browser.addRow("Academia Recognition:", self.lbl_rec_acad)
+        self.form_browser.addRow("Certified Recognition:", self.lbl_rec_cert)
+    
+        # Contact
+        self.lbl_fullname = QLabel()
+        self.lbl_email = QLabel()
+        self.lbl_phone = QLabel()
+        self.lbl_address = QLabel()
+        self.lbl_fullname.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_email.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_phone.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_address.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_address.setWordWrap(True)
+    
+        self.form_browser.addRow("Full Name:", self.lbl_fullname)
+        self.form_browser.addRow("Email Address:", self.lbl_email)
+        self.form_browser.addRow("Phone Number:", self.lbl_phone)
+        self.form_browser.addRow("Postal Address:", self.lbl_address)
+    
+        # Eligibility evidence
+        self.lbl_syllabi = QLabel()
+        self.lbl_courses = QLabel()
+        self.lbl_proof = QLabel()
+        self.lbl_links = QLabel()
+        self.lbl_additional = QLabel()
+        for _lbl in (self.lbl_syllabi, self.lbl_courses, self.lbl_proof, self.lbl_links, self.lbl_additional):
+            _lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            _lbl.setWordWrap(True)
+    
+        self.form_browser.addRow("Syllabi Integration:", self.lbl_syllabi)
+        self.form_browser.addRow("Courses/Modules:", self.lbl_courses)
+        self.form_browser.addRow("Proof of ISTQB Certifications:", self.lbl_proof)
+        self.form_browser.addRow("University Links:", self.lbl_links)
+        self.form_browser.addRow("Additional Info/Documents:", self.lbl_additional)
+    
+        # Declaration & Consent
+        self.lbl_printed_name_title = QLabel()
+        self.lbl_signature_date = QLabel()
+        self.lbl_printed_name_title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_signature_date.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    
+        self.form_browser.addRow("Printed Name, Title:", self.lbl_printed_name_title)
+        self.form_browser.addRow("Signature Date:", self.lbl_signature_date)
+    
+        # For ISTQB Academia Use Only
+        self.lbl_receiving_member_board = QLabel()
+        self.lbl_date_received = QLabel()
+        self.lbl_validity_start_date = QLabel()
+        self.lbl_validity_end_date = QLabel()
+        for _lbl in (self.lbl_receiving_member_board, self.lbl_date_received, self.lbl_validity_start_date, self.lbl_validity_end_date):
+            _lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    
+        self.form_browser.addRow("Receiving Member Board:", self.lbl_receiving_member_board)
+        self.form_browser.addRow("Date Received:", self.lbl_date_received)
+        self.form_browser.addRow("Validity Start Date:", self.lbl_validity_start_date)
+        self.form_browser.addRow("Validity End Date:", self.lbl_validity_end_date)
+    
+        # technické doplňky – oddalé načtení fitu/resize, pokud to UI používá
+        try:
+            QTimer.singleShot(0, lambda: self._browser_fit_columns())
+        except Exception:
+            pass
     
         scroll.setWidget(form_host)
         bottom_layout.addWidget(scroll)
@@ -3677,6 +3707,248 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QVBoxLayout as _VBL
         outer = _VBL(self.browser_tab)
         outer.addWidget(vsplit)
+    
+        # vlož sekční hlavičky (idempotentní)
+        try:
+            self._browser_add_section_headers()
+        except Exception:
+            pass
+        
+    def _browser_add_section_headers(self) -> None:
+        """
+        Vloží do self.form_browser vizuální záhlaví pro sekce PDF (1–7).
+        Nepracuje s daty, jen s labely existujícího QFormLayoutu. Idempotentní.
+        """
+        from PySide6.QtWidgets import QLabel, QFormLayout
+    
+        if not hasattr(self, "form_browser") or self.form_browser is None:
+            return
+        form = self.form_browser
+    
+        # Pokud už jsou sekční hlavičky přítomné, skonči
+        try:
+            for i in range(form.rowCount()):
+                it = form.itemAt(i, QFormLayout.LabelRole)
+                if it is None:
+                    continue
+                w = it.widget()
+                if isinstance(w, QLabel) and w.property("class") == "sectionHeader":
+                    return
+        except Exception:
+            pass
+    
+        def _header(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setProperty("class", "sectionHeader")
+            lbl.setStyleSheet("QLabel { font-weight: 600; padding: 6px 4px; }")
+            return lbl
+    
+        anchors = [
+            ("1) Application Type", "Application Type:"),
+            ("2) Academic Institution", "Institution Name:"),
+            ("3) Recognition", "Academia Recognition:"),
+            ("4) Contact Details", "Full Name:"),
+            ("5) Eligibility Evidence", "Syllabi Integration:"),
+            ("6) Declaration & Consent", "Printed Name, Title:"),
+            ("7) For ISTQB Academia Use Only", "Receiving Member Board:"),
+        ]
+    
+        rows = []
+        for i in range(form.rowCount()):
+            rows.append((
+                i,
+                form.itemAt(i, QFormLayout.LabelRole),
+                form.itemAt(i, QFormLayout.FieldRole),
+            ))
+    
+        for title, anchor_label in reversed(anchors):
+            for i, l_it, _ in rows:
+                if l_it is None:
+                    continue
+                w = l_it.widget()
+                if not w:
+                    continue
+                text = w.text() if hasattr(w, "text") else ""
+                if text.strip() == anchor_label:
+                    form.insertRow(i, _header(title))
+                    break
+    
+    def _pdfbrowser_enable_sorting(self) -> None:
+        """Zapne abecední řazení pro strom v PDF Browseru (safe no-op, když strom není)."""
+        from PySide6.QtCore import Qt
+        tree = getattr(self, "tree_browser", None)
+        if tree is None:
+            return
+        try:
+            tree.setSortingEnabled(True)
+            tree.sortByColumn(0, Qt.AscendingOrder)
+        except Exception:
+            pass
+        
+    def _browser_fit_columns(self) -> None:
+        """Jemné přizpůsobení šířky sloupců pro QTreeView v PDF Browseru (safe no-op)."""
+        try:
+            header = self.tree_browser.header()
+            for i in range(header.count()):
+                self.tree_browser.resizeColumnToContents(i)
+        except Exception:
+            pass
+        
+    def _browser_on_double_clicked(self, index) -> None:
+        """Dvojklik ve stromu: složka expand/collapse; soubor = zobraz detail."""
+        try:
+            model = self.tree_browser.model()
+            path_str = model.filePath(index)
+            if getattr(model, "isDir", lambda *_: False)(index):
+                if self.tree_browser.isExpanded(index):
+                    self.tree_browser.collapse(index)
+                else:
+                    self.tree_browser.expand(index)
+                return
+            from pathlib import Path
+            p = Path(path_str)
+            if p.exists() and p.suffix.lower() == ".pdf":
+                self._browser_show_pdf_details(p)
+        except Exception:
+            pass
+    
+    def _browser_on_selection_changed(self, selected, deselected) -> None:
+        """Změna výběru ve stromu → pokud je vybrán PDF soubor, naplň detail; jinak prázdno."""
+        try:
+            sel = self.tree_browser.selectionModel().selectedIndexes()
+            if not sel:
+                self._browser_show_pdf_details(None)
+                return
+            index = sel[0]
+            model = self.tree_browser.model()
+            if getattr(model, "isDir", lambda *_: False)(index):
+                self._browser_show_pdf_details(None)
+                return
+            from pathlib import Path
+            p = Path(model.filePath(index))
+            if p.exists() and p.suffix.lower() == ".pdf":
+                self._browser_show_pdf_details(p)
+            else:
+                self._browser_show_pdf_details(None)
+        except Exception:
+            self._browser_show_pdf_details(None)
+    
+    def _browser_show_pdf_details(self, path) -> None:
+        """
+        Naplní pravý náhled v 'PDF Browser' z DB (pokud existuje) nebo z parsingu PDF.
+        Prázdné hodnoty zůstávají prázdné.
+        """
+        from pathlib import Path
+        from dataclasses import asdict
+    
+        def _set(lbl, text: str) -> None:
+            try:
+                lbl.setText(text or "")
+            except Exception:
+                pass
+    
+        # Když není soubor, vyčisti panel
+        if not path:
+            for w in (
+                self.lbl_board, self.lbl_app_type, self.lbl_inst_name, self.lbl_cand_name,
+                self.lbl_rec_acad, self.lbl_rec_cert, self.lbl_fullname, self.lbl_email,
+                self.lbl_phone, self.lbl_address, self.lbl_syllabi, self.lbl_courses,
+                self.lbl_proof, self.lbl_links, self.lbl_additional,
+                self.lbl_printed_name_title, self.lbl_signature_date,
+                self.lbl_receiving_member_board, self.lbl_date_received,
+                self.lbl_validity_start_date, self.lbl_validity_end_date
+            ):
+                _set(w, "")
+            return
+    
+        p = Path(path)
+    
+        # 1) DB (pokud existuje a zná tento soubor pod sorted_root)
+        data = {}
+        try:
+            rec = self.sorted_db.get(p)
+            if rec and isinstance(rec, dict):
+                data = rec.get("data", {}) or {}
+        except Exception:
+            data = {}
+    
+        # 2) Doplň parsováním, pokud DB nemá klíče
+        def _need_parse(d: dict) -> bool:
+            REQUIRED = [
+                "board", "application_type", "institution_name", "candidate_name",
+                "recognition_academia", "recognition_certified",
+                "contact_full_name", "contact_email", "contact_phone", "contact_postal_address",
+                "syllabi_integration_description", "courses_modules_list",
+                "proof_of_istqb_certifications", "university_links", "additional_information_documents",
+                "printed_name_title", "signature_date",
+                "receiving_member_board", "date_received",
+                "validity_start_date", "validity_end_date",
+            ]
+            if not d:
+                return True
+            for k in REQUIRED:
+                if k not in d:
+                    return True
+            return False
+    
+        if _need_parse(data):
+            try:
+                from app.pdf_scanner import PdfScanner
+                parsed = {}
+                for r in PdfScanner(p.parent).scan():
+                    try:
+                        rp = Path(r.path)
+                    except Exception:
+                        rp = None
+                    if rp and rp.resolve() == p.resolve():
+                        parsed = asdict(r)
+                        break
+                if parsed:
+                    merged = dict(parsed)
+                    for k, v in (data or {}).items():
+                        if v not in (None, ""):
+                            merged[k] = v
+                    data = merged
+            except Exception:
+                pass
+    
+        # 3) Odvoď board, když chybí
+        if not data.get("board"):
+            try:
+                rel = p.resolve().relative_to(Path(self.pdf_root).resolve())
+                data["board"] = rel.parts[0] if len(rel.parts) >= 2 else p.parent.name
+            except Exception:
+                data["board"] = p.parent.name
+    
+        # 4) Naplň UI
+        def get(k: str) -> str:
+            return "" if not data else str(data.get(k, "") or "")
+    
+        _set(self.lbl_board, get("board"))
+        _set(self.lbl_app_type, get("application_type"))
+        _set(self.lbl_inst_name, get("institution_name"))
+        _set(self.lbl_cand_name, get("candidate_name"))
+        _set(self.lbl_rec_acad, get("recognition_academia"))
+        _set(self.lbl_rec_cert, get("recognition_certified"))
+    
+        _set(self.lbl_fullname, get("contact_full_name"))
+        _set(self.lbl_email, get("contact_email"))
+        _set(self.lbl_phone, get("contact_phone"))
+        _set(self.lbl_address, get("contact_postal_address"))
+    
+        _set(self.lbl_syllabi, get("syllabi_integration_description"))
+        _set(self.lbl_courses, get("courses_modules_list"))
+        _set(self.lbl_proof, get("proof_of_istqb_certifications"))
+        _set(self.lbl_links, get("university_links"))
+        _set(self.lbl_additional, get("additional_information_documents"))
+    
+        _set(self.lbl_printed_name_title, get("printed_name_title"))
+        _set(self.lbl_signature_date, get("signature_date"))
+    
+        _set(self.lbl_receiving_member_board, get("receiving_member_board"))
+        _set(self.lbl_date_received, get("date_received"))
+        _set(self.lbl_validity_start_date, get("validity_start_date"))
+        _set(self.lbl_validity_end_date, get("validity_end_date"))
 
     # ----- Data -----
     def rescan(self) -> None:
