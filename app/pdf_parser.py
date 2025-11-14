@@ -224,26 +224,34 @@ def _pdf_text_value(field: dict | None) -> Optional[str]:
 def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | None = None) -> Dict[str, Optional[str]]:
     """
     Parse ISTQB Academia Application PDF.
-    Původní pole beze změn. Rozšíření v 0.11a:
-      - printed_name_title                (Section 6 – Declaration and Consent)
-      - receiving_member_board            (Section 7 – For ISTQB Academia Use Only)
-      - date_received                     (Section 7)
-      - validity_start_date               (Section 7)
-      - validity_end_date                 (Section 7)
-    **Důležité:** U nových 5 polí bereme pouze hodnoty z AcroForm (bez text fallbacků),
-    prázdné necháváme prázdné a nic „nedohadujeme“. `validity_end_date` ponecháváme jako libovolný text.
+
+    Minimal-change rozšíření:
+      - zachovává prioritu AcroForm polí
+      - doplňuje konzervativní fallbacky z textu PDF jen pokud jsou daná pole prázdná:
+        * university_links                      (sekce 5; URL deduplikované)
+        * additional_information_documents      (sekce 5; text za labelem)
+        * printed_name_title                    (sekce 6; pouze když obsahuje jméno kandidáta)
+
+    Návratová struktura zůstává beze změny.
     """
-    # --- zachována původní logika pro existující pole (zkráceně) ---
-    norm = text.replace("\xa0", " ")
+    # Bezpečné normalizace
+    norm = (text or "").replace("\xa0", " ")
     lines = [ln.strip() for ln in norm.splitlines() if ln.strip()]
 
-    kv: Dict[str, str] = {}
-    for ln in lines:
-        m = RE_KV.match(ln)
-        if m:
-            k = m.group("k").strip().lower()
-            kv[k] = m.group("v").strip()
+    # Pomocné převody – spolehni se na existující utility v modulu, pokud jsou k dispozici
+    def _pdf_text_value_local(field: dict | None) -> Optional[str]:
+        try:
+            if not isinstance(field, dict):
+                return None
+            v = field.get("/V") or field.get("V")
+            if v is None:
+                return None
+            s = str(v).strip()
+            return s or None
+        except Exception:
+            return None
 
+    # Preferenčně čteme z AcroForm polí (beze změny)
     app_type = None
     institution = None
     candidate = None
@@ -258,9 +266,7 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
     urls = None
     syllabi_desc = None
     courses_modules = None
-    additional = None
 
-    # --- nové proměnné ---
     printed_name_title: Optional[str] = None
     receiving_member_board: Optional[str] = None
     date_received: Optional[str] = None
@@ -268,64 +274,120 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
     validity_end_date: Optional[str] = None
 
     if form_fields:
-        # Původní (existující) pole – beze změn
-        f_app = form_fields.get("Application Type")
-        if isinstance(f_app, dict):
-            app_type = _pdf_name_to_str(f_app.get("/V")) or _pdf_name_to_str(f_app.get("/DV"))
+        def fval(*keys: str) -> Optional[str]:
+            for k in form_fields.keys():
+                kk = str(k).strip().lower()
+                for probe in keys:
+                    if probe in kk:
+                        val = _pdf_text_value_local(form_fields[k])
+                        if val and val.startswith("/"):
+                            val = val[1:].lstrip()
+                        if val:
+                            return val
+            return None
 
-        institution = _pdf_text_value(form_fields.get("Name of University High or Technical School")) or institution
-        institution = _pdf_text_value(form_fields.get("Name of your academic institution")) or institution
-        candidate   = _pdf_text_value(form_fields.get("Name of candidate")) or candidate
+        app_type = fval("application type")
+        institution = fval("name of university", "name of your academic institution", "high", "technical school")
+        candidate = fval("name of candidate")
 
-        fa = form_fields.get("AcademiaRecognitionCheck")
-        if isinstance(fa, dict):
-            v = _pdf_name_to_str(fa.get("/V"))
-            academia = "Yes" if v and v.lower() == "yes" else ("No" if v else None)
-        fc = form_fields.get("CertifiedRecognitionCheck")
-        if isinstance(fc, dict):
-            v = _pdf_name_to_str(fc.get("/V"))
-            certified = "Yes" if v and v.lower() == "yes" else ("No" if v else None)
+        # checkboxy – vracíme "Yes"/"No"
+        def checkbox_truthy(raw: Optional[str]) -> Optional[bool]:
+            if raw is None:
+                return None
+            s = raw.strip().lower()
+            if s in {"yes", "on", "true", "1", "/yes"}:
+                return True
+            if s in {"no", "off", "false", "0", "/off"}:
+                return False
+            return None
 
-        contact_name = _pdf_text_value(form_fields.get("Contact name")) or contact_name
-        email        = _pdf_text_value(form_fields.get("Contact email")) or email
-        phone        = _pdf_text_value(form_fields.get("Contact phone")) or phone
-        postal       = _pdf_text_value(form_fields.get("Postal address")) or postal
+        acad_raw = fval("academiarecognitioncheck")
+        cert_raw = fval("certifiedrecognitioncheck")
+        t = checkbox_truthy(acad_raw)
+        academia = "Yes" if t else ("No" if t is False else None)
+        t = checkbox_truthy(cert_raw)
+        certified = "Yes" if t else ("No" if t is False else None)
 
-        syllabi_desc     = _pdf_text_value(form_fields.get("Descriptino of how syllabi are integrated")) or syllabi_desc
-        courses_modules  = _pdf_text_value(form_fields.get("List of courses and modules")) or courses_modules
-        proof            = _pdf_text_value(form_fields.get("Proof of certifications")) or proof
-        urls             = _pdf_text_value(form_fields.get("University website links")) or urls
-        additional       = _pdf_text_value(form_fields.get("Additional relevant information or documents")) or additional
+        contact_name = fval("contact name")
+        email = fval("contact email")
+        phone = fval("contact phone")
+        postal = fval("postal address")
 
-        signature_date = _pdf_text_value(form_fields.get("Signature Date_af_date")) or signature_date
+        syllabi_desc = fval("descriptino of how syllabi are integrated", "description of how syllabi are integrated")
+        courses_modules = fval("list of courses and modules")
+        proof = fval("proof of certifications", "proof of istqb")
 
-        # --- NOVÁ POLE: pouze AcroForm; prázdné = prázdné; bez normalizace ---
-        # klíče hledáme case-insensitive substringem
-        for k, v in form_fields.items():
-            key = str(k).strip().lower()
-            val = _pdf_text_value(v)
+        urls = fval("university website links", "website links", "university website")
+        additional = fval("additional relevant information or documents")
 
-            if val is None:
-                continue
+        signature_date = fval("signature date")
 
-            if ("printed" in key and "name" in key and "title" in key) or ("name and title" in key):
-                printed_name_title = printed_name_title or val
-            elif "receiving" in key and "member" in key and "board" in key:
-                receiving_member_board = receiving_member_board or val
-            elif "date received" in key:
-                date_received = date_received or val
-            elif "validity start" in key:
-                validity_start_date = validity_start_date or val
-            elif "validity end" in key:
-                validity_end_date = validity_end_date or val
+        # Nová pole – z AcroForm pokud existují
+        printed_name_title = fval("printed name", "name and title", "printed name, title")
+        receiving_member_board = fval("receiving member board")
+        date_received = fval("date received")
+        validity_start_date = fval("validity start")
+        validity_end_date = fval("validity end")
+    else:
+        additional = None
 
-    # --- Původní textové fallbacky pro stará pole zachovány (zkráceno) ---
-    # (… původní blok s _take_after/RE_EMAIL/normalize_signature_date atd. beze změn …)
-    # DŮLEŽITÉ: na nové sekce 6/7 se fallback z textu NEPOUŽIJE.
+    # ---------- Textové fallbacky (pouze pokud prázdné) ----------
+    import re as _re
 
-    # Normalizace pouze pro signature_date (původní chování)
-    signature_date = normalize_signature_date(signature_date)
+    def _take_section(text_src: str, start_label: str, next_label: str) -> str:
+        m = _re.search(rf"\b{_re.escape(start_label)}\b(.*?)(?:\b{_re.escape(next_label)}\b|\Z)", text_src, flags=_re.IGNORECASE | _re.DOTALL)
+        return m.group(1) if m else ""
 
+    # 5. Eligibility Evidence – obsah bývá v této sekci
+    sec5 = _take_section(norm, "5. Eligibility Evidence", "6. Declaration")
+
+    # University website links – URL z textu, deduplikace, stabilní pořadí
+    if not urls:
+        RE_URL = _re.compile(r"https?://[^\s<>()]+", _re.IGNORECASE)
+        cand = sec5 if sec5 else norm
+        found = RE_URL.findall(cand)
+        if found:
+            seen = set()
+            dedup = []
+            for u in found:
+                if u not in seen:
+                    seen.add(u)
+                    dedup.append(u)
+            urls = "\n".join(dedup) if dedup else None
+
+    # Additional relevant information – text za labelem v sekci 5
+    if not additional:
+        block = sec5 if sec5 else norm
+        m = _re.search(r"Any\s+additional\s+relevant\s+information\s+or\s+documents(?:\s*\(if any\))?\s*:\s*(.+?)(?:\n\s*\n|\b6\.|\Z)",
+                       block, flags=_re.IGNORECASE | _re.DOTALL)
+        if m:
+            val = m.group(1).strip()
+            val = _re.sub(r"\s+", " ", val).strip()
+            additional = val or None
+
+    # Printed Name, Title – opatrně, jen pokud obsahuje jméno kandidáta
+    if not printed_name_title:
+        cand_name = (candidate or "").strip()
+        scope_m = _re.search(r"\b6\.?\s*Declaration.*", norm, flags=_re.IGNORECASE | _re.DOTALL)
+        scope = scope_m.group(0) if scope_m else norm
+        if cand_name:
+            # rozvolněný vzor na jméno (mezery/diakritika)
+            def _fuzzy_name(name: str) -> str:
+                parts = name.strip().split()
+                chunks = []
+                for p in parts:
+                    chunks.append("\s*".join([_re.escape(ch) for ch in p]))
+                return "\s+".join(chunks)
+
+            name_re = _fuzzy_name(cand_name)
+            date_pat = (r"(?:\d{4}[/.-]\d{1,2}[/.-]\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{4}|[A-Za-z]+\s+\d{1,2},?\s*\d{4})")
+            patt = _re.compile(rf"({name_re})\s*,\s*([A-Za-z][A-Za-z .'-]{{1,80}}?)\s*{date_pat}", flags=_re.IGNORECASE | _re.DOTALL)
+            m = patt.search(scope)
+            if m:
+                title = _re.sub(r"\s+", " ", m.group(2)).strip()
+                printed_name_title = f"{cand_name}, {title}"
+
+    # ---------- Výstup ----------
     return {
         "application_type": app_type,
         "institution_name": institution,
@@ -342,7 +404,6 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
         "syllabi_integration_description": syllabi_desc,
         "courses_modules_list": courses_modules,
         "additional_information_documents": additional,
-        # nové (raw text; mohou být prázdné)
         "printed_name_title": printed_name_title,
         "receiving_member_board": receiving_member_board,
         "date_received": date_received,

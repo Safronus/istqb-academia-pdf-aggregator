@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.11s  
+**Aktuální verze:** 0.11t  
 **Datum vydání:** 2025-11-14  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -138,6 +138,9 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.11t — 2025-11-14
+- fix(parser): textové fallbacky pro `University website links`, `Any additional relevant information or documents` a `Printed Name, Title`. Formulářová pole mají stále prioritu.
+- fix(scanner): při prázdných hodnotách z AcroForm doplní `uni_links` a `additional_information` z parseru.
 
 ### 0.11s — 2025-11-14
 - **Sorted PDFs:** doplněno chybějící pole **`File name`** (read‑only) a **status label** `lbl_sorted_status` vpravo dole.  
