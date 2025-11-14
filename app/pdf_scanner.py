@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -21,15 +20,23 @@ class PdfRecord:
     contact_email: Optional[str]
     contact_phone: Optional[str]
     contact_postal_address: Optional[str]
-    signature_date: Optional[str]
     proof_of_istqb_certifications: Optional[str]
     syllabi_integration_description: Optional[str]
     courses_modules_list: Optional[str]
     university_links: Optional[str]
     additional_information_documents: Optional[str]
+    # --- NOVÁ POLE (6 + 7) ---
+    printed_name_title: Optional[str]
+    signature_date: Optional[str]  # původní
+    receiving_member_board: Optional[str]
+    date_received: Optional[str]
+    validity_start_date: Optional[str]
+    validity_end_date: Optional[str]
+    # ---
     board_known: bool
 
     def as_row(self) -> List[str]:
+        # POŘADÍ MUSÍ SEDĚT S Overview HLAVIČKAMI
         return [
             self.board or "",
             self.application_type or "",
@@ -46,7 +53,15 @@ class PdfRecord:
             self.proof_of_istqb_certifications or "",
             self.university_links or "",
             self.additional_information_documents or "",
+            # Consent (nově)
+            self.printed_name_title or "",
             self.signature_date or "",
+            # ISTQB internal (nově)
+            self.receiving_member_board or "",
+            self.date_received or "",
+            self.validity_start_date or "",
+            self.validity_end_date or "",
+            # File
             self.path.name,
         ]
 
@@ -59,16 +74,6 @@ class PdfRecord:
 class PdfScanner:
     def __init__(self, root: Path) -> None:
         self.root = root
-
-    def _derive_board(self, pdf_path: Path) -> str:
-        try:
-            rel = pdf_path.relative_to(self.root)
-            parts = rel.parts
-            if len(parts) >= 2:
-                return parts[0]
-            return "Unknown"
-        except Exception:
-            return "Unknown"
 
     def _parse_one(self, path: Path) -> PdfRecord:
         fields = read_pdf_form_fields(path)
@@ -86,60 +91,74 @@ class PdfScanner:
                         if isinstance(v, dict):
                             val = v.get("/V") or v.get("V")
                         else:
-                            val = str(v)
+                            val = v
                         if val is None:
                             continue
                         s = str(val).strip()
+                        if s.startswith("/"):
+                            s = s[1:].lstrip()
                         if s:
                             return s
             return None
 
-        # Application type (radio)
-        app_type = fval("application type") or ""
-        app_type = app_type.strip()
-        
+        # Section 1–5 (beze změny)
+        app_type = (fval("application type") or "").strip()
         if app_type.startswith('/'):
-            app_type = app_type[1:].lstrip()  # v0.6c: remove leading slash from PDF Name
+            app_type = app_type[1:].lstrip()
 
-        # Institution & candidate (sekce 2)
         institution = fval("name of university", "high", "technical school") or ""
         candidate = fval("name of candidate") or ""
 
-        # Recognitions (sekce 3)
-        def checkbox_truthy(val: object) -> bool:
-            if val is None:
+        def checkbox_truthy(raw: Optional[str]) -> bool | None:
+            if raw is None:
+                return None
+            s = raw.strip().lower()
+            if s in {"yes", "on", "true", "1", "/yes"}:
+                return True
+            if s in {"no", "off", "false", "0", "/no"}:
                 return False
-            s = str(val).strip().lower()
-            # běžné návraty z pdf: '/yes', '/off', 'on', 'off', 'true', 'false', '1', '0', 'checked'
-            return s in {"yes", "/yes", "on", "true", "1", "checked", "selected"}
+            return None
 
-        # vezmi první nalezenou hodnotu ve form fields
         raw_acad = fval("academiarecognitioncheck", "academia recognition", "academia_recognition")
         raw_cert = fval("certifiedrecognitioncheck", "certified recognition", "certified_recognition")
-
         acad_yes = checkbox_truthy(raw_acad)
         cert_yes = checkbox_truthy(raw_cert)
-
         recog_acad = "Yes" if acad_yes else "No"
         recog_cert = "Yes" if cert_yes else "No"
 
-        # Contacts (sekce 4)
         contact_name  = fval("full name", "contact name") or ""
         contact_email = fval("email") or ""
         contact_phone = fval("phone") or ""
         contact_addr  = fval("postal address") or ""
 
-        # Signature date – form fields / text → vždy YYYY-MM-DD
         sig_iso = guess_signature_date(fields, text) or ""
 
-        # Eligibility (sekce 5) – načteno, v Overview skryto
         syllabi_desc = fval("syllabi", "integrated") or ""
         courses_list = fval("courses/modules", "courses and modules", "courses") or ""
         proof_cert   = fval("proof of istqb", "proof of certifications") or ""
         uni_links    = fval("university website", "website links") or ""
         addl_info    = fval("additional relevant information", "additional information") or ""
 
-        board = self._derive_board(path)
+        # --- NOVÁ POLE z parse_istqb_academia_application (raw) ---
+        extra: Dict[str, Optional[str]] = {}
+        try:
+            extra = parse_istqb_academia_application(text or "", fields or {})
+            
+            # fallbacky (jen když jsou prázdná AcroForm pole)
+            if not uni_links:
+                uni_links = (extra.get("university_links") or "")
+            if not addl_info:
+                addl_info = (extra.get("additional_information_documents") or "")
+        except Exception:
+            extra = {}
+
+        printed_name_title = extra.get("printed_name_title") or ""
+        rmb                 = extra.get("receiving_member_board") or ""
+        date_received       = extra.get("date_received") or ""
+        validity_start      = extra.get("validity_start_date") or ""
+        validity_end        = extra.get("validity_end_date") or ""
+
+        board = self._derive_board(path) if hasattr(self, "_derive_board") else (path.parent.name or "Unknown")
         return PdfRecord(
             board=board,
             path=path,
@@ -153,12 +172,17 @@ class PdfScanner:
             contact_email=contact_email or None,
             contact_phone=contact_phone or None,
             contact_postal_address=contact_addr or None,
-            signature_date=sig_iso or None,
             proof_of_istqb_certifications=proof_cert or None,
             syllabi_integration_description=syllabi_desc or None,
             courses_modules_list=courses_list or None,
             university_links=uni_links or None,
             additional_information_documents=addl_info or None,
+            printed_name_title=(printed_name_title or None),
+            signature_date=sig_iso or None,
+            receiving_member_board=(rmb or None),
+            date_received=(date_received or None),
+            validity_start_date=(validity_start or None),
+            validity_end_date=(validity_end or None),
             board_known=board in KNOWN_BOARDS,
         )
 
@@ -166,8 +190,7 @@ class PdfScanner:
         records: List[PdfRecord] = []
         if self.root is None or not self.root.exists():
             return records
-    
-        # Projdeme všechny PDF (case-insensitive), ale IGNORUJEME podsložky "__archive__"
+
         for path in self.root.rglob("*"):
             try:
                 if not path.is_file():
@@ -179,12 +202,10 @@ class PdfScanner:
                     continue
             except Exception:
                 continue
-    
+
             try:
                 rec = self._parse_one(path)
                 records.append(rec)
             except Exception:
-                # tiché přeskočení, abychom nezastavili sken
                 continue
-    
         return records
