@@ -2000,9 +2000,7 @@ class MainWindow(QMainWindow):
         from datetime import datetime
         import os
     
-        # --- definice polí (label -> klíč v rec) ---
-        # soulad s Overview pořadím
-        # uvnitř on_export_overview(...) nahraď pouze definici FIELDS za:
+        # FIELDS v pořadí Overview (včetně nových)
         FIELDS: list[tuple[str, str]] = [
             ("Board", "board"),
             ("Application Type", "application_type"),
@@ -2019,7 +2017,6 @@ class MainWindow(QMainWindow):
             ("Proof of ISTQB Certifications", "proof_of_istqb_certifications"),
             ("University Links", "university_links"),
             ("Additional Info/Documents", "additional_information_documents"),
-            # NOVĚ
             ("Printed Name, Title", "printed_name_title"),
             ("Signature Date", "signature_date"),
             ("Receiving Member Board", "receiving_member_board"),
@@ -2028,7 +2025,6 @@ class MainWindow(QMainWindow):
             ("Validity End Date", "validity_end_date"),
             ("File name", "file_name"),
         ]
-    
         # --- pomocné: zjisti počet vybraných řádků + sadu vybraných názvů souborů z tabulky ---
         selected_count = 0
         selected_file_names: set[str] = set()
@@ -3053,7 +3049,6 @@ class MainWindow(QMainWindow):
             ("Proof of ISTQB Certifications", "proof_of_istqb_certifications"),
             ("University Links", "university_links"),
             ("Additional Info/Documents", "additional_information_documents"),
-            # NOVĚ
             ("Printed Name, Title", "printed_name_title"),
             ("Signature Date", "signature_date"),
             ("Receiving Member Board", "receiving_member_board"),
@@ -3364,6 +3359,7 @@ class MainWindow(QMainWindow):
         self._sorted_fill_details(Path(p))
     
     def _sorted_fill_details(self, abs_path: Optional[Path]) -> None:
+        # Vyčisti helper
         def _set(txt_widget, val: str):
             if hasattr(txt_widget, "setPlainText"):
                 txt_widget.setPlainText(val or "")
@@ -3377,13 +3373,13 @@ class MainWindow(QMainWindow):
                       self.ed_proof, self.ed_links, self.ed_additional,
                       self.ed_printed_name_title, self.ed_sigdate,
                       self.ed_receiving_member_board, self.ed_date_received,
-                      self.ed_validity_start_date, self.ed_validity_end_date):
+                      self.ed_validity_start_date, self.ed_validity_end_date,
+                      self.ed_filename):
                 _set(w, "")
             self._sorted_set_editable(False)
             self._sorted_set_status(None)
             return
     
-        # DB → load; pokud není záznam, pouze parse (bez zápisu)
         rec = self.sorted_db.get(abs_path)
         data = None
         edited = False
@@ -3398,53 +3394,54 @@ class MainWindow(QMainWindow):
             from app.pdf_scanner import PdfScanner
             scanner = PdfScanner(abs_path.parent)
             try:
-                r = scanner._parse_one(abs_path)
-                data = r.to_dict()
-                board = r.board
+                parsed = scanner.scan()
+                for r in parsed:
+                    if getattr(r, "path", None) and Path(r.path).resolve() == abs_path.resolve():
+                        from dataclasses import asdict
+                        data = asdict(r)
+                        board = getattr(r, "board", "") or abs_path.parent.name
+                        break
             except Exception:
                 data = {}
-                board = ""
     
-        # Osazení polí
-        _set(self.ed_board, board or "")
-        _set(self.ed_app_type, (data or {}).get("application_type") or "")
-        _set(self.ed_inst_name, (data or {}).get("institution_name") or "")
-        _set(self.ed_cand_name, (data or {}).get("candidate_name") or "")
-        _set(self.ed_rec_acad, (data or {}).get("recognition_academia") or "")
-        _set(self.ed_rec_cert, (data or {}).get("recognition_certified") or "")
-        _set(self.ed_fullname, (data or {}).get("contact_full_name") or "")
-        _set(self.ed_email, (data or {}).get("contact_email") or "")
-        _set(self.ed_phone, (data or {}).get("contact_phone") or "")
-        _set(self.ed_address, (data or {}).get("contact_postal_address") or "")
-        _set(self.ed_syllabi, (data or {}).get("syllabi_integration_description") or "")
-        _set(self.ed_courses, (data or {}).get("courses_modules_list") or "")
-        _set(self.ed_proof, (data or {}).get("proof_of_istqb_certifications") or "")
-        _set(self.ed_links, (data or {}).get("university_links") or "")
-        _set(self.ed_additional, (data or {}).get("additional_information_documents") or "")
-        # NOVÉ
-        _set(self.ed_printed_name_title, (data or {}).get("printed_name_title") or "")
-        _set(self.ed_sigdate, (data or {}).get("signature_date") or "")
-        _set(self.ed_receiving_member_board, (data or {}).get("receiving_member_board") or "")
-        _set(self.ed_date_received, (data or {}).get("date_received") or "")
-        _set(self.ed_validity_start_date, (data or {}).get("validity_start_date") or "")
-        _set(self.ed_validity_end_date, (data or {}).get("validity_end_date") or "")
+        _set(self.ed_board, board)
+        _set(self.ed_app_type, str(data.get("application_type", "")))
+        _set(self.ed_inst_name, str(data.get("institution_name", "")))
+        _set(self.ed_cand_name, str(data.get("candidate_name", "")))
+        _set(self.ed_rec_acad, str(data.get("recognition_academia", "")))
+        _set(self.ed_rec_cert, str(data.get("recognition_certified", "")))
+        _set(self.ed_fullname, str(data.get("contact_full_name", "")))
+        _set(self.ed_email, str(data.get("contact_email", "")))
+        _set(self.ed_phone, str(data.get("contact_phone", "")))
+        _set(self.ed_address, str(data.get("contact_postal_address", "")))
+        _set(self.ed_syllabi, str(data.get("syllabi_integration_description", "")))
+        _set(self.ed_courses, str(data.get("courses_modules_list", "")))
+        _set(self.ed_proof, str(data.get("proof_of_istqb_certifications", "")))
+        _set(self.ed_links, str(data.get("university_links", "")))
+        _set(self.ed_additional, str(data.get("additional_information_documents", "")))
+        _set(self.ed_printed_name_title, str(data.get("printed_name_title", "")))
+        _set(self.ed_sigdate, str(data.get("signature_date", "")))
+        _set(self.ed_receiving_member_board, str(data.get("receiving_member_board", "")))
+        _set(self.ed_date_received, str(data.get("date_received", "")))
+        _set(self.ed_validity_start_date, str(data.get("validity_start_date", "")))
+        _set(self.ed_validity_end_date, str(data.get("validity_end_date", "")))
+        _set(self.ed_filename, file_name)
     
-        # status/lock
         self._sorted_set_editable(False)
-        self._sorted_set_status(None)
+        self._sorted_set_status("Edited" if edited else "Parsed (unmodified)")
         self._sorted_current_path = abs_path
     
     def _sorted_set_status(self, txt: Optional[str]) -> None:
         self.lbl_sorted_status.setText("—" if not txt else txt)
     
     def _sorted_set_editable(self, can_edit: bool) -> None:
-        # Board a File name read-only; ostatní podle can_edit
+        # Board a File name necháme read-only; ostatní podle can_edit
         for w in (self.ed_app_type, self.ed_inst_name, self.ed_cand_name,
                   self.ed_rec_acad, self.ed_rec_cert, self.ed_fullname,
-                  self.ed_email, self.ed_phone, self.ed_sigdate,
-                  # NOVĚ
-                  self.ed_printed_name_title, self.ed_receiving_member_board,
-                  self.ed_date_received, self.ed_validity_start_date, self.ed_validity_end_date):
+                  self.ed_email, self.ed_phone,
+                  self.ed_printed_name_title, self.ed_sigdate,
+                  self.ed_receiving_member_board, self.ed_date_received,
+                  self.ed_validity_start_date, self.ed_validity_end_date):
             w.setReadOnly(not can_edit)
         for w in (self.ed_address, self.ed_syllabi, self.ed_courses,
                   self.ed_proof, self.ed_links, self.ed_additional):
@@ -3478,22 +3475,27 @@ class MainWindow(QMainWindow):
             "proof_of_istqb_certifications": _get(self.ed_proof).strip(),
             "university_links": _get(self.ed_links).strip(),
             "additional_information_documents": _get(self.ed_additional).strip(),
-            # NOVÉ
+            # nové
             "printed_name_title": _get(self.ed_printed_name_title).strip(),
             "signature_date": _get(self.ed_sigdate).strip(),
             "receiving_member_board": _get(self.ed_receiving_member_board).strip(),
             "date_received": _get(self.ed_date_received).strip(),
             "validity_start_date": _get(self.ed_validity_start_date).strip(),
             "validity_end_date": _get(self.ed_validity_end_date).strip(),
-            # File meta
-            "file_name": abs_path.name,
-            "path": str(abs_path),
+            # meta
+            "file_name": _get(self.ed_filename).strip(),
+            "path": str(Path(abs_path).resolve()),
         }
     
-        # upsert do DB (zpětně kompatibilní; verzi JSON neměním)
-        self.sorted_db.set(abs_path, new_data, edited=True)
-        self._sorted_set_status("Saved")
-        QMessageBox.information(self, "Save to DB", "Saved.")
+        self.sorted_db.mark_edited(Path(abs_path), new_data)
+        self.sorted_db.save()
+    
+        self._sorted_set_editable(False)
+        self._sorted_set_status("Edited")
+        try:
+            self.statusBar().showMessage("Saved to DB.")
+        except Exception:
+            pass
         
     def _filter_board_sorted(self, txt: str) -> None:
         proxy = self.table_sorted.model()
@@ -3662,14 +3664,14 @@ class MainWindow(QMainWindow):
 
     # ----- Data -----
     def rescan(self) -> None:
-        """Scan PDF root and repopulate the Overview table while preserving selection."""
+        """Scan PDF root and repopulate the Overview table while preserving selection.
+        Minimal-change: přidány nové sloupce, „Sorted“ zůstává poslední a je dopočten původními funkcemi.
+        """
         from pathlib import Path
         from PySide6.QtCore import Qt, QItemSelectionModel
         from PySide6.QtGui import QStandardItemModel, QStandardItem, QBrush, QColor
         from PySide6.QtWidgets import QStyle
-        from app.pdf_scanner import PdfScanner
     
-        # --- Hlavičky (Sorted vždy poslední) ---
         headers = [
             "Board",
             "Application\nApplication Type",
@@ -3686,10 +3688,8 @@ class MainWindow(QMainWindow):
             "Eligibility Evidence\nProof of ISTQB Certifications",
             "Eligibility Evidence\nUniversity Links",
             "Eligibility Evidence\nAdditional Info/Documents",
-            # NOVÉ – Consent (sekce 6)
             "Declaration and Consent\nPrinted Name, Title",
             "Signature Date",
-            # NOVÉ – ISTQB internal (sekce 7)
             "For ISTQB Academia Purpose Only\nReceiving Member Board",
             "For ISTQB Academia Purpose Only\nDate Received",
             "For ISTQB Academia Purpose Only\nValidity Start Date",
@@ -3699,7 +3699,7 @@ class MainWindow(QMainWindow):
         ]
         self._headers = headers
     
-        # Pomocníci na zjištění indexů sloupců podle „tailu“
+        # Pomocná funkce: index podle „tailu“
         def find_col_tail(hdrs: list[str], tail: str) -> int | None:
             for i, h in enumerate(hdrs):
                 t = h.split("\n")[-1].strip() if "\n" in h else h.strip()
@@ -3710,91 +3710,88 @@ class MainWindow(QMainWindow):
         FILE_COL = find_col_tail(headers, "File name")
         SORTED_COL = find_col_tail(headers, "Sorted")
     
-        # Zachovej výběr podle File name z PROXY
+        # Ulož aktuální výběr (podle „File name“ z PROXY)
         selected_paths: set[str] = set()
         try:
-            if hasattr(self, "table") and self.table.selectionModel():
-                for pidx in self.table.selectionModel().selectedRows():
-                    key = self._proxy.index(pidx.row(), FILE_COL).data(Qt.UserRole + 1)
-                    if not key:
-                        key = self._proxy.index(pidx.row(), FILE_COL).data(Qt.DisplayRole)
+            if hasattr(self, "table") and self.table.selectionModel() and self._proxy:
+                for pidx in self.table.selectionModel().selectedRows(FILE_COL):
+                    key = self._proxy.data(pidx, Qt.UserRole + 1) or self._proxy.data(pidx, Qt.DisplayRole)
                     if key:
                         selected_paths.add(str(key))
         except Exception:
-            selected_paths = set()
+            pass
     
-        # Model + proxy
-        model = QStandardItemModel(self)
-        model.setHorizontalHeaderLabels(headers)
-        self._model = model
-        self._proxy.setSourceModel(model)
+        # Model
+        if not hasattr(self, "_source_model"):
+            self._source_model = QStandardItemModel(0, len(headers), self)
+        else:
+            self._source_model.setColumnCount(len(headers))
+        self._source_model.setHorizontalHeaderLabels(headers)
+        model = self._source_model
+        self.table.setModel(self._proxy)  # proxy už je nastaven v _build_overview_tab
     
-        # Statistika – počet PDF
-        found = 0
+        # Root
+        root = None
         try:
-            root = Path(self.pdf_root) if getattr(self, "pdf_root", None) else None
-            if root and root.exists():
-                for p in root.rglob("*.pdf"):
-                    if p.is_file():
-                        found += 1
+            root = Path(self.pdf_root) if isinstance(self.pdf_root, (str, Path)) else None
+            if root and not root.exists():
+                root = None
         except Exception:
-            found = 0
+            root = None
+        if not root:
+            model.removeRows(0, model.rowCount())
+            try:
+                self.statusBar().showMessage("PDF root not found.")
+            except Exception:
+                pass
+            return
     
-        # Sken
-        scanner = PdfScanner(self.pdf_root) if isinstance(self.pdf_root, Path) else None
-        self.records = scanner.scan() if scanner else []
+        # Scan
+        from app.pdf_scanner import PdfScanner
+        scanner = PdfScanner(root)
+        self.records = scanner.scan()
     
-        # Vyprázdni a naplň model (přidán prázdný 'Sorted')
+        # Vyprázdni a naplň
         if model.rowCount() > 0:
             model.removeRows(0, model.rowCount())
     
-        # Barevné bloky (tmavý theme, konzistentní s projektem)
+        # Barevné skupiny (původní + nové)
         COLS_APPLICATION = [1]
         COLS_INSTITUTION = [2, 3]
         COLS_RECOG      = [4, 5]
         COLS_CONTACT    = [6, 7, 8, 9]
         COLS_ELIG       = [10, 11, 12, 13, 14]
-        COLS_CONSENT    = [15, 16]            # NOVĚ: Printed Name, Title + Signature Date
-        COLS_ISTQB_INT  = [17, 18, 19, 20]    # NOVĚ: 4 vnitřní sloupce
+        COLS_CONSENT    = [15, 16]          # NOVĚ
+        COLS_ISTQB_INT  = [17, 18, 19, 20]  # NOVĚ
     
         BRUSH_APP   = QBrush(QColor(58, 74, 110))
         BRUSH_INST  = QBrush(QColor(74, 58, 110))
         BRUSH_RECOG = QBrush(QColor(58, 110, 82))
         BRUSH_CONT  = QBrush(QColor(110, 82, 58))
         BRUSH_ELIG  = QBrush(QColor(92, 92, 92))
-        # NOVÉ odstíny
         BRUSH_CONS  = QBrush(QColor(110, 58, 74))
         BRUSH_ISTQB = QBrush(QColor(58, 92, 110))
     
-        def paint_group(items: list, cols: list[int], brush: QBrush) -> None:
+        icon_yes = self.style().standardIcon(QStyle.SP_DialogApplyButton)
+        icon_no  = self.style().standardIcon(QStyle.SP_DialogCancelButton)
+    
+        def paint_group(items: list[QStandardItem], cols: list[int], brush: QBrush) -> None:
             for c in cols:
                 if 0 <= c < len(items):
-                    items[c].setData(brush, Qt.BackgroundRole)
+                    items[c].setBackground(brush)
     
-        # ikonky yes/no pro checkbox pole
-        def set_yesno_icon(item):
-            if not item:
-                return
-            try:
-                style = self.style() if hasattr(self, "style") else None
-                icon_yes = style.standardIcon(QStyle.SP_DialogApplyButton)
-                icon_no  = style.standardIcon(QStyle.SP_DialogCancelButton)
-                val = (item.data(Qt.DisplayRole) or "").strip().lower()
-                if val in {"yes", "on", "true", "1", "checked"}:
-                    item.setIcon(icon_yes)
-                elif val in {"no", "off", "false", "0"}:
-                    item.setIcon(icon_no)
-            except Exception:
-                pass
+        def set_yesno_icon(item: QStandardItem) -> None:
+            val = (item.text() or "").strip().lower()
+            item.setIcon(icon_yes if val in {"yes", "on", "true", "1", "checked"} else icon_no)
     
+        found = 0
         for rec in self.records:
-            row_vals = rec.as_row()
+            row_vals = rec.as_row()  # odpovídá headers KROMĚ „Sorted“
             items = [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
-            # prázdná buňka pro 'Sorted'
+            # doplň prázdný „Sorted“
             items.append(QStandardItem(""))
-    
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
             paint_group(items, COLS_RECOG,      BRUSH_RECOG)
@@ -3802,44 +3799,51 @@ class MainWindow(QMainWindow):
             paint_group(items, COLS_ELIG,       BRUSH_ELIG)
             paint_group(items, COLS_CONSENT,    BRUSH_CONS)
             paint_group(items, COLS_ISTQB_INT,  BRUSH_ISTQB)
-    
-            # ikonky Y/N
             set_yesno_icon(items[4])  # Academia
             set_yesno_icon(items[5])  # Certified
     
-            # plná cesta do 'File name' (UserRole+1)
+            # ulož absolutní cestu do „File name“ (UserRole+1)
             if FILE_COL is not None and 0 <= FILE_COL < len(items):
                 items[FILE_COL].setData(str(rec.path), Qt.UserRole + 1)
     
             model.appendRow(items)
+            found += 1
     
-        # Úpravy view
+        # třídění a fit
         self.table.sortByColumn(0, Qt.AscendingOrder)
-        for c in range(len(headers)):
-            self.table.resizeColumnToContents(c)
-        # lehké zvýhodnění textových sloupců (Eligibility)
-        for c in (10, 11, 12, 13, 14):
-            try:
-                self.table.horizontalHeader().setStretchLastSection(False)
-            except Exception:
-                pass
-    
-        # Obnova výběru
         try:
-            selm = self.table.selectionModel()
-            if not selected_paths or not selm:
-                return
-            # nalezni řádky odpovídající selected_paths
-            to_select = []
-            for r in range(model.rowCount()):
-                idx = model.index(r, FILE_COL)
-                fp = idx.data(Qt.UserRole + 1) or idx.data(Qt.DisplayRole)
-                if fp and str(fp) in selected_paths:
-                    to_select.append(self._proxy.mapFromSource(idx))
-            if to_select:
-                selm.clearSelection()
-                for pidx in to_select:
-                    selm.select(pidx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            for c in range(len(headers)):
+                self.table.resizeColumnToContents(c)
+            for c in (10, 11, 12, 13, 14):
+                self.table.setColumnHidden(c, True)
+        except Exception:
+            pass
+    
+        # označ „Sorted“ a aplikuj hiding (původní logika)
+        try:
+            self._overview_update_sorted_flags()
+            self._overview_apply_sorted_row_hiding()
+        except Exception:
+            pass
+    
+        # obnov výběr
+        try:
+            if selected_paths and self._proxy is not None:
+                sel_model = self.table.selectionModel()
+                for r in range(model.rowCount()):
+                    sval = model.index(r, FILE_COL).data(Qt.UserRole + 1) if FILE_COL is not None else None
+                    if not sval and FILE_COL is not None:
+                        sval = model.index(r, FILE_COL).data()
+                    if sval and str(sval) in selected_paths:
+                        pidx = self._proxy.mapFromSource(model.index(r, 0))
+                        sel_model.select(pidx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        except Exception:
+            pass
+    
+        self._rebuild_watch_list()
+        try:
+            root_str = str(self.pdf_root) if isinstance(self.pdf_root, Path) else "<unset>"
+            self.statusBar().showMessage(f"PDF found: {found} • Parsed: {len(self.records)} • Root: {root_str}")
         except Exception:
             pass
 
@@ -4024,11 +4028,9 @@ class MainWindow(QMainWindow):
             for lbl in (
                 self.lbl_board, self.lbl_known, self.lbl_app_type, self.lbl_inst, self.lbl_cand,
                 self.lbl_acad, self.lbl_cert, self.lbl_contact, self.lbl_email, self.lbl_phone,
-                self.lbl_postal, self.lbl_date, self.lbl_syllabi, self.lbl_courses,
-                self.lbl_proof, self.lbl_links, self.lbl_additional,
-                # NOVÉ
-                self.lbl_printed_name_title, self.lbl_rmb, self.lbl_date_received,
-                self.lbl_validity_start, self.lbl_validity_end
+                self.lbl_postal, self.lbl_printed_name_title, self.lbl_date, self.lbl_rmb,
+                self.lbl_date_received, self.lbl_validity_start, self.lbl_validity_end,
+                self.lbl_syllabi, self.lbl_courses, self.lbl_proof, self.lbl_links, self.lbl_additional
             ):
                 lbl.setText("-")
             return
