@@ -33,36 +33,36 @@ from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QApplic
 class BoardHidingDelegate(QStyledItemDelegate):
     """
     Vykreslovací delegát pro sloupec 'Board':
-    - Pro PRVNÍ výskyt hodnoty v aktuálním pořadí tabulky vykreslí text normálně.
-    - Pro DALŠÍ výskyty stejné hodnoty vykreslí prázdný text (jen vizuálně).
-    - Nezasahuje do modelu, dat ani exportu (data(DisplayRole) zůstávají zachována).
+    - Optimalizováno: Text se skryje, pokud je shodný s HNED PŘEDCHOZÍM řádkem v aktuálním zobrazení.
+    - Odstraňuje původní lineární průchod historií, který způsoboval zamrzání GUI (O(N^2)).
     """
     def paint(self, painter, option, index):
         if index.column() == 0:  # sloupec Board
             current = index.data(Qt.DisplayRole)
             hide = False
-            # Zjisti, zda se stejná hodnota vyskytla již výše (v proxy pořadí)
-            # Pozn.: lineární průchod jen přes viditelný model; výkonově OK pro běžné tabulky.
-            try:
-                model = index.model()
-                for r in range(0, index.row()):
-                    other = model.index(r, index.column()).data(Qt.DisplayRole)
-                    if other == current and current not in (None, ""):
-                        hide = True
-                        break
-            except Exception:
-                hide = False
+            
+            # OPTIMALIZACE: Místo procházení všech předchozích řádků (což seká aplikaci)
+            # porovnáme hodnotu jen s řádkem vizuálně nad námi.
+            if index.row() > 0:
+                # Získáme data z předchozího řádku ve stejném sloupci
+                prev_idx = index.model().index(index.row() - 1, index.column())
+                previous = prev_idx.data(Qt.DisplayRole)
+                
+                # Pokud je board stejný jako o řádek výše, text skryjeme (vizuální grouping)
+                if previous == current and current not in (None, ""):
+                    hide = True
 
             if hide:
                 opt = QStyleOptionViewItem(option)
                 self.initStyleOption(opt, index)
-                opt.text = ""  # vykreslit prázdný text, zbytek styly necháme
+                opt.text = ""  # vykreslit prázdný text, styly (pozadí atd.) zůstanou
                 style = option.widget.style() if option.widget else QApplication.style()
                 style.drawControl(QStyle.CE_ItemViewItem, opt, painter, option.widget)
                 return
 
-        # Defaultní vykreslení pro ostatní sloupce nebo první výskyt Board
+        # Defaultní vykreslení pro ostatní sloupce nebo první výskyt
         super().paint(painter, option, index)
+
         
         
         
@@ -1228,56 +1228,102 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QMessageBox
         from pathlib import Path
         import shutil
-    
+
         sel = self.table.selectionModel()
         if not sel or not sel.hasSelection():
             QMessageBox.information(self, "Export", "Please select at least one row.")
             return
-    
-        # Detekce sloupců Board a File name (předpoklad: poslední sloupec = File name s fullpath v UserRole+1)
+
         model = self.table.model()
         if model is None:
             return
-    
-        # Zjisti indexy vybraných řádků v source modelu
-        rows = [i.row() for i in sel.selectedRows()]
-        if not rows:
-            QMessageBox.information(self, "Export", "Není co exportovat.")
-            return
-    
-        # Najdi sloupce
-        COL_BOARD = 0
-        COL_FILE  = model.columnCount() - 1
-    
+
+        # 1. Dynamické nalezení indexů sloupců
+        col_board = 0
+        col_file = -1
+        
+        for c in range(model.columnCount()):
+            header = model.headerData(c, Qt.Horizontal, Qt.DisplayRole)
+            if header:
+                header = str(header).lower()
+                if "board" in header:
+                    col_board = c
+                elif "file name" in header:
+                    col_file = c
+
+        if col_file == -1:
+            col_file = model.columnCount() - 1
+
         exported = 0
-        for r in rows:
-            board = (model.index(r, COL_BOARD).data() or "").strip()
-            # Full path je v UserRole + 1
-            full = model.index(r, COL_FILE).data(Qt.UserRole + 1) or model.index(r, COL_FILE).data()
-            if not full:
-                continue
-            full = Path(str(full))
-            if not full.exists():
-                continue
-    
-            # Cílová složka Sorted PDFs/<board> (board může být prázdný → kořen Sorted PDFs)
-            dest_dir = (self.sorted_root / board).resolve()
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / full.name
-    
-            try:
-                shutil.copy2(full, dest)
-                exported += 1
-            except Exception:
-                continue
-    
-        # Rescan Sorted (naparsuje a upsertne do DB)
-        self.rescan_sorted()
-    
+        
+        rows = sorted(list(set(i.row() for i in sel.selectedRows())))
+
         try:
-            self.statusBar().showMessage(f"Exportováno do 'Sorted PDFs': {exported} souborů.")
-        except Exception:
-            pass
+            for r in rows:
+                # 2. Cesta k souboru
+                idx_file = model.index(r, col_file)
+                src_path_str = idx_file.data(Qt.UserRole + 1)
+                
+                if not src_path_str:
+                    src_path_str = idx_file.data(Qt.UserRole)
+                if not src_path_str:
+                    filename_only = idx_file.data(Qt.DisplayRole)
+                    if filename_only:
+                        rec = next((x for x in self.records if x.path.name == filename_only), None)
+                        if rec:
+                            src_path_str = str(rec.path)
+
+                if not src_path_str:
+                    print(f"[Export Skip] Row {r}: No path found.")
+                    continue
+
+                src_path = Path(str(src_path_str))
+                if not src_path.exists():
+                    print(f"[Export Skip] File not found: {src_path}")
+                    continue
+
+                # 3. Board
+                idx_board = model.index(r, col_board)
+                target_board = (idx_board.data(Qt.DisplayRole) or "Unsorted").strip()
+                target_board = "".join(c for c in target_board if c.isalnum() or c in (' ', '-', '_')).strip()
+                if not target_board:
+                    target_board = "Unsorted"
+
+                # 4. Data (originál z paměti)
+                record_data = {}
+                found_rec = next((rec for rec in self.records if str(rec.path.resolve()) == str(src_path.resolve())), None)
+                if found_rec:
+                    record_data = found_rec.to_dict()
+                else:
+                    record_data = {"file_name": src_path.name}
+
+                # 5. Kopírování
+                dest_dir = (self.sorted_root / target_board).resolve()
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest_file = dest_dir / src_path.name
+
+                try:
+                    shutil.copy2(src_path, dest_file)
+                except Exception as e:
+                    print(f"[Export Error] Copy failed: {e}")
+                    continue
+
+                # 6. Update DB - POUŽITÍ mark_edited MÍSTO update
+                record_data["board"] = target_board
+                self.sorted_db.mark_edited(dest_file, record_data)
+                
+                exported += 1
+
+            if exported > 0:
+                self.sorted_db.save()
+                self.rescan_sorted()
+                self.statusBar().showMessage(f"Exportováno {exported} souborů do 'Sorted PDFs'.")
+            else:
+                QMessageBox.warning(self, "Export Failed", "Nepodařilo se exportovat žádný soubor.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Critical error: {e}")
+
 
     # ----- Overview tab -----
     def _build_overview_tab(self) -> None:
@@ -1322,6 +1368,11 @@ class MainWindow(QMainWindow):
         self.open_btn = QPushButton("Open Selected PDF")
         self.open_btn.clicked.connect(self.open_selected_pdf)
     
+        # ===== NOVÉ TLAČÍTKO: Export to Sorted PDFs =====
+        self.btn_export_sorted = QPushButton("Export to Sorted PDFs")
+        self.btn_export_sorted.setToolTip("Copy selected PDFs to Sorted PDFs/{Board}/")
+        self.btn_export_sorted.clicked.connect(self.export_selected_to_sorted)
+    
         # Checkbox Sorted (filtr ve view)
         self.chk_overview_sorted = QCheckBox("Sorted")
         self.chk_overview_sorted.setToolTip("Show/hide records that are already in 'Sorted PDFs'")
@@ -1340,6 +1391,7 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.chk_overview_sorted)
         controls.addSpacing(12)
         controls.addWidget(self.open_btn)
+        controls.addWidget(self.btn_export_sorted)  # ← PŘIDÁNO
         layout.addLayout(controls)
     
         # Tabulka Overview
@@ -1472,6 +1524,7 @@ class MainWindow(QMainWindow):
             self.table.horizontalHeader().sortIndicatorChanged.connect(lambda *_: self._overview_apply_sorted_row_hiding())
         except Exception:
             pass
+
         
     def _overview_find_col(self, tail: str) -> int | None:
         """
@@ -3185,35 +3238,40 @@ class MainWindow(QMainWindow):
     def rescan_sorted(self) -> None:
         """
         Sestaví strom 'Sorted PDFs' z DB (edited i parsed).
-        Do UserRole ukládá DB klíč (relativní cesta v rámci sorted_root) a také absolutní
-        cestu v sorted_root pro případ exportů. Nepoužívá SortedDb.boards().
+        Reloaduje DB z disku, aby se projevily změny po exportu.
         """
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QTreeWidgetItem
         from pathlib import Path
-    
+
+        # 1. Reload DB (Nutné, aby se zobrazil nově exportovaný soubor!)
+        if hasattr(self, "sorted_db"):
+            self.sorted_db.load()
+
+        if not hasattr(self, "tree_sorted"):
+            return
+
         self.tree_sorted.clear()
-    
+
         sorted_root = getattr(self.sorted_db, "sorted_root", None)
         sorted_root = Path(sorted_root).resolve() if sorted_root else None
-    
+
         # Iterace položek z DB
         def _iter_sorted_items():
             it = getattr(self.sorted_db, "iter_items", None)
             if callable(it):
-                # očekáváme, že iter_items() vrací (abs_sorted_path, record)
                 yield from it()
                 return
-            # fallback: pokud SortedDb nemá iter_items a má .items() s klíči = relativním klíčem
+            # fallback
             try:
                 for rel_key, rec in self.sorted_db.items():
                     abs_sorted = (sorted_root / rel_key).resolve() if sorted_root else Path(rel_key).resolve()
                     yield abs_sorted, rec
             except Exception:
                 return
-    
+
         root_items: dict[str, QTreeWidgetItem] = {}
-    
+
         def _ensure_board_node(board_name: str) -> QTreeWidgetItem:
             node = root_items.get(board_name)
             if node is None:
@@ -3222,34 +3280,38 @@ class MainWindow(QMainWindow):
                 self.tree_sorted.addTopLevelItem(node)
                 root_items[board_name] = node
             return node
-    
+
         for abs_sorted_path, rec in _iter_sorted_items():
             try:
                 if isinstance(abs_sorted_path, str):
                     abs_sorted_path = Path(abs_sorted_path)
+                    
                 data = rec.get("data", {}) if isinstance(rec, dict) else {}
                 board = data.get("board") or abs_sorted_path.parent.name
                 name = data.get("file_name") or abs_sorted_path.name
-    
-                # DB klíč = cesta relativně k sorted_root, pokud existuje
+
+                # DB klíč
                 db_key = None
                 if sorted_root:
                     try:
                         db_key = str(abs_sorted_path.resolve().relative_to(sorted_root))
                     except Exception:
                         db_key = None
-    
+
                 parent = _ensure_board_node(board)
                 child = QTreeWidgetItem([name])
-                # UserRole: uložíme DB klíč (který očekává SortedDb.get/key_for)
-                # a navíc ABS path v sorted_root (pro případné exporty).
+                
+                # UserRole: DB klíč
                 child.setData(0, Qt.UserRole, db_key or "")
+                # UserRole + 1: Absolutní cesta
                 child.setData(0, Qt.UserRole + 1, str(abs_sorted_path.resolve()))
+                
                 parent.addChild(child)
             except Exception:
                 continue
-    
+
         self.tree_sorted.expandAll()
+
 
     def _sorted_db_path(self) -> Path:
         return self.sorted_db.db_path
@@ -4220,36 +4282,55 @@ class MainWindow(QMainWindow):
 
     def _rebuild_watch_list(self) -> None:
         """Watch PDF root, all subdirs, and all .pdf files."""
-        if not hasattr(self, "_watcher"):
+        if not hasattr(self, "watcher"):
             return
-        watcher = self._watcher
-        # Clear
+
+        # 1. Clean up existing watchers to free resources
+        if self.watcher.files():
+            self.watcher.removePaths(self.watcher.files())
+        if self.watcher.directories():
+            self.watcher.removePaths(self.watcher.directories())
+
+        if not self.pdfroot or not self.pdfroot.exists():
+            return
+
+        # 2. Collect directories only
+        dirs = set()
+        dirs.add(str(self.pdfroot.resolve()))
+
         try:
-            if watcher.files():
-                watcher.removePaths(watcher.files())
-            if watcher.directories():
-                watcher.removePaths(watcher.directories())
+            # Procházíme rekurzivně, ale přidáváme JEN SLOŽKY
+            for p in self.pdfroot.rglob("*"):
+                if p.is_dir():
+                    # Ignore 'Sorted PDFs' folder to prevent infinite loops during export
+                    if p.name == "Sorted PDFs" or "Sorted PDFs" in p.parts:
+                        continue
+                    # Ignore hidden dirs and caches
+                    if p.name.startswith(".") or "__pycache__" in p.parts:
+                        continue
+                    dirs.add(str(p.resolve()))
         except Exception:
             pass
 
-        dirs = set()
-        files = set()
-        if self.pdf_root.exists():
-            dirs.add(str(self.pdf_root))
-            for p in self.pdf_root.rglob("*"):
-                if p.is_dir():
-                    dirs.add(str(p))
-                elif p.suffix.lower() == ".pdf":
-                    files.add(str(p))
+        # 3. Register paths (Batch add is faster)
         if dirs:
-            watcher.addPaths(sorted(dirs))
-        if files:
-            watcher.addPaths(sorted(files))
+            self.watcher.addPaths(sorted(list(dirs)))
 
-    def _on_fs_changed(self, _path: str) -> None:
-        # Debounce frequent events
-        if hasattr(self, "_fs_debounce"):
-            self._fs_debounce.start()
+    def _on_fs_changed(self, path: str) -> None:
+        """
+        Handle file system changes with loop prevention.
+        """
+        # CRITICAL: Ignore changes to DB files to prevent infinite reload loops
+        if path.endswith("sorted_db.json") or path.endswith("recognized_people.json"):
+            return
+        
+        # Ignore changes inside Sorted PDFs (we manage that folder explicitly)
+        if "Sorted PDFs" in path:
+            return
+
+        # Debounce the update (restart timer if triggered again rapidly)
+        if hasattr(self, "fs_debounce"):
+            self.fs_debounce.start()
 
     def _fs_debounced(self) -> None:
         # Rescan and refresh watchers (new subdirs/files)
