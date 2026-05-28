@@ -180,30 +180,38 @@ class MainWindow(QMainWindow):
         from app.sorted_db import SortedDb
         self.sorted_db = SortedDb(self.sorted_root)
         self.sorted_db.load()
-    
+
+        # Workflow status store (per-PDF stav)
+        from app.status_store import StatusStore
+        self.status_store = StatusStore()
+        self.status_store.load()
+
         self.records: List[PdfRecord] = []
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
-    
+
         self.overview_tab = QWidget()
         self.browser_tab = QWidget()
         self.sorted_tab = QWidget()
         self.contacts_tab = QWidget()
         self.recognized_tab = QWidget()
-    
+        self.summary_tab = QWidget()
+
         self.tabs.addTab(self.overview_tab, "Overview")
         self.tabs.addTab(self.browser_tab, "PDF Browser")
         self.tabs.addTab(self.sorted_tab, "Sorted PDFs")
         self.tabs.addTab(self.contacts_tab, "Board Contacts")
         self.tabs.addTab(self.recognized_tab, "Recognized People List")
-    
+        self.tabs.addTab(self.summary_tab, "Summary")
+
         self._build_menu()
         self._build_overview_tab()
         self._build_browser_tab()
         self._build_sorted_tab()
         self._build_contacts_tab()
         self._build_recognized_tab()
-    
+        self._build_summary_tab()
+
         self.rescan()
         self.rescan_sorted()
         self._init_fs_watcher()
@@ -1612,12 +1620,17 @@ class MainWindow(QMainWindow):
         # Kontextové menu – export do Sorted (po exportu jednorázově zreviduj Sorted sloupec)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         def _ctx(pos):
+            from app.status_store import STATUSES
             idx = self.table.indexAt(pos)
             if idx.isValid():
                 if not self.table.selectionModel().isSelected(idx):
                     self.table.selectRow(idx.row())
             menu = QMenu(self.table)
             act_export_sorted = menu.addAction("Export to 'Sorted PDFs' folder")
+            act_copy = menu.addAction("Copy data to clipboard (email)")
+            menu.addSeparator()
+            status_menu = menu.addMenu("Set status")
+            status_actions = {status_menu.addAction(s): s for s in STATUSES}
             chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
             if chosen == act_export_sorted:
                 self.export_selected_to_sorted()
@@ -1625,8 +1638,13 @@ class MainWindow(QMainWindow):
                 try:
                     self._overview_update_sorted_flags()
                     self._overview_apply_sorted_row_hiding()
+                    self._overview_apply_statuses()
                 except Exception:
                     pass
+            elif chosen == act_copy:
+                self._overview_copy_selection_to_clipboard()
+            elif chosen in status_actions:
+                self._overview_set_status_for_selection(status_actions[chosen])
         if not hasattr(self, "_overview_ctx_connected"):
             self.table.customContextMenuRequested.connect(_ctx)
             self._overview_ctx_connected = True
@@ -1797,7 +1815,9 @@ class MainWindow(QMainWindow):
             self._source_model.setData(idx_sorted, tooltip or None, Qt.ToolTipRole)
 
             # Zpětná vazba do tabulky: do buněk promítni ručně editované hodnoty
-            # ze Sorted PDFs a barevně je zvýrazni (text + tooltip).
+            # ze Sorted PDFs a barevně je zvýrazni (pozadí + tooltip). U sloupců
+            # Wished Recognition se text nezobrazuje (jen ikona), proto je nutné
+            # zvýraznit pozadím – jinak by úprava nebyla vidět.
             if edited and edit_data is not None:
                 for key, col in field_cols.items():
                     new_val = str(edit_data.get(key, "") or "").strip()
@@ -1806,6 +1826,7 @@ class MainWindow(QMainWindow):
                     if not new_val or new_val == old_val:
                         continue
                     self._source_model.setData(cell, new_val, Qt.DisplayRole)
+                    self._source_model.setData(cell, QBrush(QColor(95, 75, 20)), Qt.BackgroundRole)
                     self._source_model.setData(cell, fg_edited, Qt.ForegroundRole)
                     self._source_model.setData(cell, "Edited in Sorted PDFs", Qt.ToolTipRole)
                     if col in recog_cols:
@@ -1840,7 +1861,299 @@ class MainWindow(QMainWindow):
             self._overview_apply_sorted_row_hiding()
         except Exception:
             pass
-        
+
+    # ---- Workflow status (per-PDF) ----
+    _STATUS_COLORS = {
+        "In Progress": (90, 90, 96),
+        "Completed": (56, 118, 72),
+        "Ready for Web": (48, 104, 120),
+        "Published on Web": (96, 72, 140),
+        "Problematic": (150, 60, 60),
+    }
+
+    def _status_key_for_path(self, path) -> str:
+        """Stable status key '<board>/<file_name>' relative to pdf_root."""
+        from pathlib import Path
+        try:
+            p = Path(path).resolve()
+            rel = p.relative_to(Path(self.pdf_root).resolve())
+            return rel.as_posix()
+        except Exception:
+            try:
+                p = Path(path)
+                return f"{p.parent.name}/{p.name}"
+            except Exception:
+                return str(path)
+
+    def _overview_apply_statuses(self) -> None:
+        """Fill the 'Status' column from the status store, with color coding."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QBrush, QColor
+        status_col = self._overview_find_col("Status")
+        fn_col = self._overview_find_col("File name")
+        if status_col is None or fn_col is None or not hasattr(self, "_source_model"):
+            return
+        m = self._source_model
+        for r in range(m.rowCount()):
+            abs_p = m.index(r, fn_col).data(Qt.UserRole + 1)
+            if not abs_p:
+                fname = (m.index(r, fn_col).data(Qt.DisplayRole) or "").strip()
+                abs_p = self._find_record_path_for_filename(fname)
+            key = self._status_key_for_path(abs_p) if abs_p else ""
+            status = self.status_store.get(key)
+            idx = m.index(r, status_col)
+            m.setData(idx, status, Qt.DisplayRole)
+            m.setData(idx, Qt.AlignCenter, Qt.TextAlignmentRole)
+            rgb = self._STATUS_COLORS.get(status, (90, 90, 96))
+            m.setData(idx, QBrush(QColor(*rgb)), Qt.BackgroundRole)
+            m.setData(idx, QBrush(QColor(245, 245, 245)), Qt.ForegroundRole)
+
+    def _overview_set_status_for_selection(self, status: str) -> None:
+        """Set workflow status for all selected Overview rows."""
+        from PySide6.QtCore import Qt
+        if not hasattr(self, "table") or self.table.selectionModel() is None:
+            return
+        fn_col = self._overview_find_col("File name")
+        if fn_col is None:
+            return
+        changed = 0
+        for pidx in self.table.selectionModel().selectedRows(fn_col):
+            abs_p = pidx.data(Qt.UserRole + 1)
+            if not abs_p:
+                abs_p = self._find_record_path_for_filename((pidx.data(Qt.DisplayRole) or "").strip())
+            if not abs_p:
+                continue
+            self.status_store.set(self._status_key_for_path(abs_p), status)
+            changed += 1
+        if changed:
+            self.status_store.save()
+            self._overview_apply_statuses()
+            try:
+                self._refresh_summary()
+            except Exception:
+                pass
+            try:
+                self.statusBar().showMessage(f"Status set to '{status}' for {changed} record(s).")
+            except Exception:
+                pass
+
+    # Structured layout for the email clipboard export (section -> [(label, key)])
+    _CLIPBOARD_SECTIONS = [
+        ("1. Application Type", [("Application Type", "application_type")]),
+        ("2. Academic Institution", [
+            ("Institution Name", "institution_name"),
+            ("Candidate Name", "candidate_name"),
+        ]),
+        ("3. Wished Recognitions", [
+            ("Academia Recognition", "recognition_academia"),
+            ("Certified Recognition", "recognition_certified"),
+        ]),
+        ("4. Contact Details", [
+            ("Full Name", "contact_full_name"),
+            ("Email", "contact_email"),
+            ("Phone", "contact_phone"),
+            ("Postal Address", "contact_postal_address"),
+        ]),
+        ("5. Eligibility Evidence", [
+            ("Syllabi Integration", "syllabi_integration_description"),
+            ("Courses/Modules", "courses_modules_list"),
+            ("Proof of ISTQB Certifications", "proof_of_istqb_certifications"),
+            ("University Links", "university_links"),
+            ("Additional Info/Documents", "additional_information_documents"),
+        ]),
+        ("6. Declaration and Consent", [
+            ("Printed Name, Title", "printed_name_title"),
+            ("Signature Date", "signature_date"),
+        ]),
+        ("7. For ISTQB Academia Use Only", [
+            ("Receiving Member Board", "receiving_member_board"),
+            ("Date Received", "date_received"),
+            ("Validity Start Date", "validity_start_date"),
+            ("Validity End Date", "validity_end_date"),
+        ]),
+    ]
+
+    def _format_record_for_clipboard(self, data: dict) -> str:
+        lines = []
+        board = str(data.get("board", "") or "").strip()
+        fname = str(data.get("file_name", "") or "").strip()
+        header = "ISTQB Academia Recognition – Application"
+        if board:
+            header += f" ({board})"
+        lines.append(header)
+        if fname:
+            lines.append(f"File: {fname}")
+        lines.append("")
+        for section_title, fields in self._CLIPBOARD_SECTIONS:
+            lines.append(section_title)
+            for label, key in fields:
+                val = str(data.get(key, "") or "").strip()
+                lines.append(f"  {label}: {val}")
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _overview_copy_selection_to_clipboard(self) -> None:
+        """Copy structured, email-friendly text for the selected Overview rows."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        if not hasattr(self, "table") or self.table.selectionModel() is None:
+            return
+        fn_col = self._overview_find_col("File name")
+        if fn_col is None:
+            return
+        blocks = []
+        for pidx in self.table.selectionModel().selectedRows(fn_col):
+            abs_p = pidx.data(Qt.UserRole + 1)
+            if not abs_p:
+                abs_p = self._find_record_path_for_filename((pidx.data(Qt.DisplayRole) or "").strip())
+            if not abs_p:
+                continue
+            data = self._overview_effective_data(abs_p)
+            if not data.get("file_name"):
+                from pathlib import Path
+                data["file_name"] = Path(abs_p).name
+            blocks.append(self._format_record_for_clipboard(data))
+        if not blocks:
+            QMessageBox.information(self, "Copy", "Please select at least one row.")
+            return
+        text = ("\n" + ("-" * 60) + "\n\n").join(blocks)
+        QApplication.clipboard().setText(text)
+        try:
+            self.statusBar().showMessage(f"Copied {len(blocks)} record(s) to clipboard.")
+        except Exception:
+            pass
+
+    def _overview_effective_data(self, abs_path) -> dict:
+        """Merge parsed record data with manual edits stored in the Sorted DB
+        (matched by file content hash). Returns a dict of field -> value."""
+        from pathlib import Path
+        data = {}
+        try:
+            rec = next((x for x in getattr(self, "records", [])
+                        if str(x.path.resolve()) == str(Path(abs_path).resolve())), None)
+            if rec is not None:
+                data = rec.to_dict()
+        except Exception:
+            data = {}
+        try:
+            dig = self._hash_file(abs_path)
+            edits = self._collect_sorted_edits_by_hash()
+            info = edits.get(dig) if dig else None
+            if info and info.get("edited"):
+                for k, v in (info.get("data") or {}).items():
+                    if v not in (None, ""):
+                        data[k] = v
+        except Exception:
+            pass
+        return data
+
+    # ---- Summary tab ----
+    _SUMMARY_CORE_FIELDS = [
+        ("Application Type", "application_type"),
+        ("Institution Name", "institution_name"),
+        ("Candidate Name", "candidate_name"),
+        ("Full Name", "contact_full_name"),
+        ("Email", "contact_email"),
+        ("Phone", "contact_phone"),
+        ("Postal Address", "contact_postal_address"),
+        ("Signature Date", "signature_date"),
+        ("Printed Name, Title", "printed_name_title"),
+    ]
+
+    def _build_summary_tab(self) -> None:
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QTextBrowser, QLabel
+        layout = QVBoxLayout(self.summary_tab)
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("Dataset summary"))
+        bar.addStretch(1)
+        btn = QPushButton("Refresh")
+        btn.clicked.connect(self._refresh_summary)
+        bar.addWidget(btn)
+        layout.addLayout(bar)
+        self.summary_view = QTextBrowser()
+        self.summary_view.setOpenExternalLinks(False)
+        layout.addWidget(self.summary_view, 1)
+
+    def _missing_core_fields(self, data: dict) -> list[str]:
+        return [label for label, key in self._SUMMARY_CORE_FIELDS
+                if not str(data.get(key, "") or "").strip()]
+
+    def _refresh_summary(self) -> None:
+        if not hasattr(self, "summary_view"):
+            return
+        from app.status_store import STATUSES
+        records = getattr(self, "records", []) or []
+        total = len(records)
+
+        auto_complete = 0
+        processed_complete = 0
+        incomplete_list = []          # (board, fname, [missing labels])
+        by_board = {}                 # board -> [count, processed_count]
+        by_status = {s: 0 for s in STATUSES}
+
+        for rec in records:
+            try:
+                parsed = rec.to_dict()
+            except Exception:
+                parsed = {}
+            effective = self._overview_effective_data(rec.path)
+
+            parsed_missing = self._missing_core_fields(parsed)
+            eff_missing = self._missing_core_fields(effective)
+            if not parsed_missing and not getattr(rec, "needs_manual_entry", False):
+                auto_complete += 1
+            if not eff_missing:
+                processed_complete += 1
+            else:
+                incomplete_list.append((rec.board or "—", rec.path.name, eff_missing))
+
+            b = rec.board or "—"
+            slot = by_board.setdefault(b, [0, 0])
+            slot[0] += 1
+            if not eff_missing:
+                slot[1] += 1
+
+            key = self._status_key_for_path(rec.path)
+            st = self.status_store.get(key)
+            by_status[st] = by_status.get(st, 0) + 1
+
+        incomplete = total - processed_complete
+
+        def row(label, val, color=None):
+            c = f' style="color:{color}"' if color else ""
+            return f"<tr><td>{label}</td><td align='right'{c}><b>{val}</b></td></tr>"
+
+        html = ["<div style='font-family:sans-serif;'>"]
+        html.append("<h3>Counts</h3><table cellpadding='3'>")
+        html.append(row("Total PDFs", total))
+        html.append(row("Fully auto-parsed", auto_complete, "#7CFC7C"))
+        html.append(row("Fully processed (incl. manual edits)", processed_complete, "#7CFC7C"))
+        html.append(row("Incomplete (missing something)", incomplete, "#FFB0B0" if incomplete else None))
+        html.append("</table>")
+
+        html.append("<h3>By status</h3><table cellpadding='3'>")
+        for s in STATUSES:
+            html.append(row(s, by_status.get(s, 0)))
+        html.append("</table>")
+
+        html.append("<h3>By board</h3><table cellpadding='3'>")
+        html.append("<tr><td><b>Board</b></td><td align='right'><b>Total</b></td><td align='right'><b>Complete</b></td></tr>")
+        for b in sorted(by_board):
+            tot, comp = by_board[b]
+            html.append(f"<tr><td>{b}</td><td align='right'>{tot}</td><td align='right'>{comp}</td></tr>")
+        html.append("</table>")
+
+        html.append("<h3>Incomplete records – missing fields</h3>")
+        if not incomplete_list:
+            html.append("<p>All records have the core fields filled. 🎉</p>")
+        else:
+            html.append("<ul>")
+            for board, fname, missing in sorted(incomplete_list, key=lambda x: (x[0], x[1])):
+                html.append(f"<li><b>{board}</b> / {fname}<br><span style='color:#FFB0B0'>missing: {', '.join(missing)}</span></li>")
+            html.append("</ul>")
+        html.append("</div>")
+        self.summary_view.setHtml("\n".join(html))
+
     def _find_record_path_for_filename(self, fname: str):
         """
         Zjisti Path k PDF pro Overview řádek:
@@ -3834,10 +4147,12 @@ class MainWindow(QMainWindow):
 
         self._sorted_set_editable(False)
         self._sorted_set_status("Edited")
-        # Promítni úpravu zpět do Overview (hodnoty + 'Edited' indikátor).
+        # Promítni úpravu zpět do Overview (hodnoty + 'Edited' indikátor) a souhrn.
         try:
             self._overview_update_sorted_flags()
             self._overview_apply_sorted_row_hiding()
+            self._overview_apply_statuses()
+            self._refresh_summary()
         except Exception:
             pass
         try:
@@ -4350,6 +4665,7 @@ class MainWindow(QMainWindow):
             "For ISTQB Academia Purpose Only\nValidity End Date",
             "File\nFile name",
             "Sorted",
+            "Status",
         ]
         self._headers = headers
     
@@ -4444,7 +4760,8 @@ class MainWindow(QMainWindow):
             items = [QStandardItem(v) for v in row_vals]
             for it in items:
                 it.setEditable(False)
-            # doplň prázdný „Sorted“
+            # doplň prázdný „Sorted“ a „Status“ (Status se naplní zvlášť)
+            items.append(QStandardItem(""))
             items.append(QStandardItem(""))
             paint_group(items, COLS_APPLICATION, BRUSH_APP)
             paint_group(items, COLS_INSTITUTION, BRUSH_INST)
@@ -4479,7 +4796,17 @@ class MainWindow(QMainWindow):
             self._overview_apply_sorted_row_hiding()
         except Exception:
             pass
-    
+
+        # naplň sloupec Status a obnov souhrn
+        try:
+            self._overview_apply_statuses()
+        except Exception:
+            pass
+        try:
+            self._refresh_summary()
+        except Exception:
+            pass
+
         # obnov výběr
         try:
             if selected_paths and self._proxy is not None:

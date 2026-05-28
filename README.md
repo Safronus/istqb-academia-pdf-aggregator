@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.14b  
+**Aktuální verze:** 0.15  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -169,6 +169,12 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.15 — 2026-05-28
+- **feat(status):** každý PDF záznam má **workflow stav** (sloupec **Status** v Overview, barevně): *In Progress* (výchozí), *Completed*, *Ready for Web*, *Published on Web*, *Problematic*. Nastavuje se přes kontextové menu (podporuje hromadný výběr). Stav se ukládá lokálně (`statuses.json` v config adresáři, klíč `board/file_name`).
+- **feat(overview):** nové **kontextové akce** nad záznamy – *Set status* (5 stavů) a *Copy data to clipboard (email)* (členěný text se sekcemi 1–7, hodnoty „Field: value", včetně ručních úprav ze Sorted PDFs).
+- **feat(summary):** nová záložka **Summary** – základní počty (celkem / kompletně automaticky / kompletně zpracováno / neúplné), počty **podle stavu**, počty **podle boardu** a **seznam neúplných záznamů** s konkrétními chybějícími poli.
+- **fix(overview):** úpravy ve sloupcích **Wished Recognitions** (Academia/Certified) jsou nyní vizuálně vidět – editovaná buňka má zvýrazněné **pozadí** (samotný zelený text se u ikonových sloupců nezobrazoval).
+
 ### 0.14b — 2026-05-28
 - **feat(overview):** **zpětná vazba editovaných hodnot do tabulky Overview.** Hodnoty doplněné/změněné ručně v záložce Sorted PDFs se nyní promítnou přímo do buněk Overview (zeleně zvýrazněný text + tooltip „Edited in Sorted PDFs"), včetně ikonek Yes/No u *Academia/Certified Recognition*. Aktualizuje se hned po **Save to DB** i při rescanu.
 
