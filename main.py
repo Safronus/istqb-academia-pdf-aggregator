@@ -8,9 +8,7 @@ from PySide6.QtWidgets import QApplication
 from app.main_window import MainWindow
 from app.themes import apply_dark_palette  # FIX: ve 0.3h je apply_dark_palette
 
-def resolve_pdf_root(arg: Optional[str]) -> Path:
-    if arg:
-        return Path(arg).expanduser().resolve()
+def default_pdf_root() -> Path:
     return (Path(__file__).parent / "PDF").resolve()
 
 def main() -> None:
@@ -36,10 +34,9 @@ def main() -> None:
         except Exception:
             pdf_root_arg = None
 
-    root = resolve_pdf_root(pdf_root_arg)
-    root.mkdir(parents=True, exist_ok=True)
+    cli_pdf_root = Path(pdf_root_arg).expanduser().resolve() if pdf_root_arg else None
 
-    win = MainWindow(pdf_root=root)
+    win = MainWindow(default_pdf_root=default_pdf_root(), cli_pdf_root=cli_pdf_root)
 
     # Pokud je v projektu nainstalován "manual refresh guard", aktivuj ho
     try:

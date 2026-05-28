@@ -1,7 +1,7 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.11t  
-**Datum vydání:** 2025-11-14  
+**Aktuální verze:** 0.12  
+**Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
 Aplikace slouží k vyhledávání, parsování, třídění a exportu údajů z
@@ -44,8 +44,15 @@ source .venv/bin/activate
 pip install -r requirements.txt  # je-li k dispozici; jinak: pip install PySide6
 python main.py --root "/cesta/k/kořeni/PDF"
 ```
-- `--root` míří na **kořen adresáře s PDF** (podadresáře = boards jako `CFTL`, `LTSTQB`, …).  
+- `--pdf-root` míří na **kořen adresáře s PDF** (podadresáře = boards jako `CFTL`, `LTSTQB`, …). Je **nepovinný** — bez něj se použije naposledy uložená složka, jinak výchozí `./PDF`.  
+- Složku s PDF i složku **Sorted PDFs** lze kdykoli změnit v menu **File** (volba se uloží).  
 - Při prvním spuštění se vytvoří (pokud chybí) adresář **Sorted PDFs** pro lokální DB a exporty.
+
+### Nastavení (settings.json)
+Aplikace si pamatuje nastavení mezi spuštěními v souboru `settings.json` v konfiguračním adresáři OS
+(`QStandardPaths.AppConfigLocation`, na macOS typicky `~/Library/Application Support/istqb-academia-aggregator/`).
+Ukládá se: poslední PDF složka, složka Sorted PDFs, geometrie okna, poslední záložka a Overview filtry.
+Soubor je čistě lokální (není verzovaný).
 
 ---
 
@@ -138,6 +145,12 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.12 — 2026-05-28
+- **feat(settings):** PDF kořen i složka **Sorted PDFs** jsou nově **vybíratelné za běhu** přes menu **File → Open PDF folder… / Open Sorted PDFs folder…** (`QFileDialog`).
+- **feat(settings):** aplikace si **pamatuje nastavení** mezi spuštěními v JSON souboru (`settings.json` v config adresáři OS, `QStandardPaths.AppConfigLocation`): poslední PDF složka, složka Sorted PDFs, velikost/pozice okna, poslední záložka a Overview filtry (hledání, board, *Hide Sorted*).
+- **fix:** `sorted_root` už není natvrdo vázán na aktuální pracovní adresář — bere se z uloženého nastavení (fallback: `./Sorted PDFs`).
+- Priorita PDF kořene: argument `--pdf-root` > uložené nastavení > výchozí `./PDF`.
+
 ### 0.11t — 2025-11-14
 - fix(parser): textové fallbacky pro `University website links`, `Any additional relevant information or documents` a `Printed Name, Title`. Formulářová pole mají stále prioritu.
 - fix(scanner): při prázdných hodnotách z AcroForm doplní `uni_links` a `additional_information` z parseru.

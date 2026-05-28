@@ -144,15 +144,38 @@ class RecordsModel(QSortFilterProxyModel):
         return (a_board, a_app, a_cand) < (b_board, b_app, b_cand)
 
 class MainWindow(QMainWindow):
-    def __init__(self, pdf_root: Path):
+    def __init__(self, default_pdf_root: Path, cli_pdf_root: Optional[Path] = None):
         super().__init__()
         self.setWindowTitle("ISTQB Academia PDF Aggregator")
         self.resize(1200, 800)
-        self.pdf_root = pdf_root
-    
-        # Kořen "Sorted PDFs"
-        self.sorted_root = (Path.cwd() / "Sorted PDFs").resolve()
-    
+
+        # Persisted settings (JSON in platform config dir)
+        from app.settings import AppSettings
+        self.settings = AppSettings()
+        self.settings.load()
+
+        # PDF root precedence: CLI argument > saved setting > default
+        saved_pdf = self.settings.get("pdf_root")
+        if cli_pdf_root is not None:
+            self.pdf_root = cli_pdf_root
+        elif saved_pdf and Path(saved_pdf).exists():
+            self.pdf_root = Path(saved_pdf)
+        else:
+            self.pdf_root = default_pdf_root
+        try:
+            self.pdf_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        self.settings.set("pdf_root", str(self.pdf_root))
+
+        # Kořen "Sorted PDFs" precedence: saved setting > default (vedle PDF kořene)
+        saved_sorted = self.settings.get("sorted_root")
+        if saved_sorted:
+            self.sorted_root = Path(saved_sorted)
+        else:
+            self.sorted_root = (Path.cwd() / "Sorted PDFs").resolve()
+        self.settings.set("sorted_root", str(self.sorted_root))
+
         # DB pro Sorted PDFs
         from app.sorted_db import SortedDb
         self.sorted_db = SortedDb(self.sorted_root)
@@ -184,9 +207,65 @@ class MainWindow(QMainWindow):
         self.rescan()
         self.rescan_sorted()
         self._init_fs_watcher()
-        
+
+        self._restore_window_geometry()
+        self._restore_ui_state()
+
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, self._apply_global_sizing_once)
+
+    def _restore_window_geometry(self) -> None:
+        geo = self.settings.get("window_geometry")
+        if not geo:
+            return
+        try:
+            from PySide6.QtCore import QByteArray
+            self.restoreGeometry(QByteArray.fromBase64(geo.encode("ascii")))
+            self._has_saved_geometry = True
+        except Exception:
+            pass
+
+    def _restore_ui_state(self) -> None:
+        # Overview filters (widgets are connected, so setting them re-applies filtering)
+        try:
+            self.search_edit.setText(self.settings.get_filter("overview_search", "") or "")
+        except Exception:
+            pass
+        try:
+            board = self.settings.get_filter("overview_board", "") or ""
+            if board:
+                i = self.board_combo.findText(board)
+                if i >= 0:
+                    self.board_combo.setCurrentIndex(i)
+        except Exception:
+            pass
+        try:
+            self.chk_overview_sorted.setChecked(bool(self.settings.get_filter("hide_sorted", True)))
+        except Exception:
+            pass
+        # Active tab
+        try:
+            idx = int(self.settings.get("active_tab", 0) or 0)
+            if 0 <= idx < self.tabs.count():
+                self.tabs.setCurrentIndex(idx)
+        except Exception:
+            pass
+
+    def closeEvent(self, event) -> None:
+        try:
+            self.settings.set("window_geometry",
+                              bytes(self.saveGeometry().toBase64()).decode("ascii"))
+            self.settings.set("active_tab", int(self.tabs.currentIndex()))
+            self.settings.set_filter("overview_search", self.search_edit.text())
+            self.settings.set_filter("overview_board", self.board_combo.currentText())
+            self.settings.set_filter("hide_sorted", bool(self.chk_overview_sorted.isChecked()))
+            self.settings.save()
+        except Exception:
+            pass
+        try:
+            super().closeEvent(event)
+        except Exception:
+            pass
 
     def _build_recognized_tab(self) -> None:
         """
@@ -1058,13 +1137,63 @@ class MainWindow(QMainWindow):
         about_action = QAction("About", self)
         about_action.triggered.connect(self._about)
 
-        # Minimal-change: actions directly on menubar (no new menus introduced)
+        # File menu: selectable PDF / Sorted PDFs folders (persisted)
+        open_pdf_folder_action = QAction("Open PDF folder…", self)
+        open_pdf_folder_action.triggered.connect(self._choose_pdf_folder)
+        open_sorted_folder_action = QAction("Open Sorted PDFs folder…", self)
+        open_sorted_folder_action.triggered.connect(self._choose_sorted_folder)
+
+        file_menu = self.menuBar().addMenu("File")
+        file_menu.addAction(open_pdf_folder_action)
+        file_menu.addAction(open_sorted_folder_action)
+
+        # Minimal-change: zbývající akce přímo na menubaru
         self.menuBar().addAction(rescan_action)
         self.menuBar().addAction(open_action)
         self.menuBar().addAction(export_csv_action)
         self.menuBar().addAction(export_xlsx_action)
         self.menuBar().addAction(about_action)
-        
+
+    def _choose_pdf_folder(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        start = str(self.pdf_root) if self.pdf_root and Path(self.pdf_root).exists() else str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, "Select PDF folder", start)
+        if not chosen:
+            return
+        self.pdf_root = Path(chosen)
+        self.settings.set("pdf_root", str(self.pdf_root))
+        self.settings.save()
+        # Přesměruj browser strom + FS watcher na nový kořen a přeskenuj
+        try:
+            if getattr(self, "fs_model", None) is not None:
+                self.fs_model.setRootPath(str(self.pdf_root))
+                self.tree_browser.setRootIndex(self.fs_model.index(str(self.pdf_root)))
+        except Exception:
+            pass
+        try:
+            self._rebuild_watch_list()
+        except Exception:
+            pass
+        self.rescan()
+
+    def _choose_sorted_folder(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        start = str(self.sorted_root) if self.sorted_root and Path(self.sorted_root).exists() else str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, "Select Sorted PDFs folder", start)
+        if not chosen:
+            return
+        self.sorted_root = Path(chosen)
+        self.settings.set("sorted_root", str(self.sorted_root))
+        self.settings.save()
+        # Přepoj DB na nový kořen a přeskenuj Sorted
+        try:
+            from app.sorted_db import SortedDb
+            self.sorted_db = SortedDb(self.sorted_root)
+            self.sorted_db.load()
+        except Exception:
+            pass
+        self.rescan_sorted()
+
     def _gather_visible_records(self) -> list[PdfRecord]:
         model = self.table.model()
         if model is None:
@@ -4475,24 +4604,26 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QGuiApplication
         from PySide6.QtCore import QTimer
     
-        # 1) Zvětšení okna min. o 50 %; respektovat dostupný prostor obrazovky
+        # 1) Zvětšení okna min. o 50 %; respektovat dostupný prostor obrazovky.
+        #    Pokud máme uloženou geometrii okna, nepřepisuj ji auto-zvětšením.
         try:
-            cw, ch = max(self.width(), 800), max(self.height(), 600)
-            desired_w = int(cw * 1.5)
-            desired_h = int(ch * 1.5)
-    
-            scr = QGuiApplication.primaryScreen()
-            if scr:
-                avail = scr.availableGeometry()
-                max_w = int(avail.width() * 0.95)
-                max_h = int(avail.height() * 0.95)
-                desired_w = min(desired_w, max_w)
-                desired_h = min(desired_h, max_h)
-    
-            # Nepoužij menší než aktuální
-            desired_w = max(desired_w, cw)
-            desired_h = max(desired_h, ch)
-            self.resize(desired_w, desired_h)
+            if not getattr(self, "_has_saved_geometry", False):
+                cw, ch = max(self.width(), 800), max(self.height(), 600)
+                desired_w = int(cw * 1.5)
+                desired_h = int(ch * 1.5)
+
+                scr = QGuiApplication.primaryScreen()
+                if scr:
+                    avail = scr.availableGeometry()
+                    max_w = int(avail.width() * 0.95)
+                    max_h = int(avail.height() * 0.95)
+                    desired_w = min(desired_w, max_w)
+                    desired_h = min(desired_h, max_h)
+
+                # Nepoužij menší než aktuální
+                desired_w = max(desired_w, cw)
+                desired_h = max(desired_h, ch)
+                self.resize(desired_w, desired_h)
         except Exception:
             pass
     

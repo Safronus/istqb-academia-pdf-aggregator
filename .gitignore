@@ -55,3 +55,6 @@ sorted_db.json
 
 # Scratch/debug scripts (may hardcode real filenames/PII)
 debug_pdf.py
+
+# App settings (stored in platform config dir; ignore any local copy too)
+settings.json
