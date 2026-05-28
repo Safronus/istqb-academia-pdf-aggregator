@@ -34,6 +34,8 @@ class PdfRecord:
     validity_end_date: Optional[str]
     # ---
     board_known: bool
+    # True = PDF bez AcroForm i bez vytěžitelných hodnot (sken/prázdný formulář)
+    needs_manual_entry: bool = False
 
     def as_row(self) -> List[str]:
         # POŘADÍ MUSÍ SEDĚT S Overview HLAVIČKAMI
@@ -143,12 +145,20 @@ class PdfScanner:
         extra: Dict[str, Optional[str]] = {}
         try:
             extra = parse_istqb_academia_application(text or "", fields or {})
-            
+
             # fallbacky (jen když jsou prázdná AcroForm pole)
             if not uni_links:
                 uni_links = (extra.get("university_links") or "")
             if not addl_info:
                 addl_info = (extra.get("additional_information_documents") or "")
+            # Flattened PDF bez AcroForm: doplň kontaktní blok z textové vrstvy.
+            if not institution:   institution   = extra.get("institution_name") or ""
+            if not candidate:     candidate     = extra.get("candidate_name") or ""
+            if not contact_name:  contact_name  = extra.get("contact_full_name") or ""
+            if not contact_email: contact_email = extra.get("contact_email") or ""
+            if not contact_phone: contact_phone = extra.get("contact_phone") or ""
+            if not contact_addr:  contact_addr  = extra.get("contact_postal_address") or ""
+            if not sig_iso:       sig_iso       = extra.get("signature_date") or ""
         except Exception:
             extra = {}
 
@@ -157,6 +167,14 @@ class PdfScanner:
         date_received       = extra.get("date_received") or ""
         validity_start      = extra.get("validity_start_date") or ""
         validity_end        = extra.get("validity_end_date") or ""
+
+        # PDF bez vytěžitelných hodnot: žádná AcroForm pole a žádné identifikační
+        # údaje (naskenovaný obraz nebo prázdný/poškozený formulář) -> ruční vyplnění.
+        needs_manual_entry = (
+            not fields
+            and not any([institution, candidate, contact_name, contact_email,
+                         contact_phone, contact_addr, sig_iso, printed_name_title])
+        )
 
         board = self._derive_board(path) if hasattr(self, "_derive_board") else (path.parent.name or "Unknown")
         return PdfRecord(
@@ -184,6 +202,7 @@ class PdfScanner:
             validity_start_date=(validity_start or None),
             validity_end_date=(validity_end or None),
             board_known=board in KNOWN_BOARDS,
+            needs_manual_entry=needs_manual_entry,
         )
 
     def scan(self) -> List[PdfRecord]:

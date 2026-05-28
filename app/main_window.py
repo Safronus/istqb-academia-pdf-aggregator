@@ -3626,7 +3626,18 @@ class MainWindow(QMainWindow):
         _set(self.ed_filename, fname)
     
         self._sorted_set_editable(False)
-        self._sorted_set_status("Edited" if (rec and rec.get("edited")) else "Parsed (unmodified)")
+        _identity_empty = not any(
+            get(k) for k in (
+                "candidate_name", "contact_full_name", "contact_email",
+                "contact_phone", "signature_date", "printed_name_title",
+            )
+        )
+        if rec and rec.get("edited"):
+            self._sorted_set_status("Edited")
+        elif bool(merged.get("needs_manual_entry")) or _identity_empty:
+            self._sorted_set_status("⚠ Sken/prázdný formulář – vyplňte ručně (Edit → Save to DB)")
+        else:
+            self._sorted_set_status("Parsed (unmodified)")
         self._sorted_current_path = abs_path if abs_path else None
     
     def _sorted_set_status(self, txt: Optional[str]) -> None:
@@ -3811,6 +3822,15 @@ class MainWindow(QMainWindow):
     
         # ----- Labely v pravém detailu (jen UI prvky; naplňování jinde) -----
     
+        # Varovný banner: PDF bez vytěžitelných hodnot (sken/prázdný formulář)
+        self.lbl_browser_warning = QLabel()
+        self.lbl_browser_warning.setWordWrap(True)
+        self.lbl_browser_warning.setStyleSheet(
+            "QLabel { color: #ffae42; font-weight: bold; padding: 4px; }"
+        )
+        self.lbl_browser_warning.setVisible(False)
+        self.form_browser.addRow(self.lbl_browser_warning)
+
         # Application / Institution / Recognition
         self.lbl_board = QLabel()
         self.lbl_app_type = QLabel()
@@ -4057,6 +4077,10 @@ class MainWindow(QMainWindow):
                 self.lbl_validity_start_date, self.lbl_validity_end_date
             ):
                 _set(w, "")
+            try:
+                self.lbl_browser_warning.setVisible(False)
+            except Exception:
+                pass
             return
     
         p = Path(path)
@@ -4147,6 +4171,27 @@ class MainWindow(QMainWindow):
         _set(self.lbl_date_received, get("date_received"))
         _set(self.lbl_validity_start_date, get("validity_start_date"))
         _set(self.lbl_validity_end_date, get("validity_end_date"))
+
+        # Varování pro naskenovaná / prázdná PDF bez vytěžitelných hodnot.
+        # Odvozeno z prázdnosti identifikačních polí, aby to fungovalo i pro
+        # záznamy z DB a samo zmizelo po ručním vyplnění.
+        try:
+            identity_empty = not any(
+                get(k) for k in (
+                    "candidate_name", "contact_full_name", "contact_email",
+                    "contact_phone", "signature_date", "printed_name_title",
+                )
+            )
+            if bool(data.get("needs_manual_entry")) or identity_empty:
+                self.lbl_browser_warning.setText(
+                    "⚠ Naskenované PDF nebo prázdný formulář bez textové vrstvy – "
+                    "hodnoty nelze automaticky vytěžit. Vyplňte ručně v záložce Sorted PDFs."
+                )
+                self.lbl_browser_warning.setVisible(True)
+            else:
+                self.lbl_browser_warning.setVisible(False)
+        except Exception:
+            pass
 
     # ----- Data -----
     def rescan(self) -> None:

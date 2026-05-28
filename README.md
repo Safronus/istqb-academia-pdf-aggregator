@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.12a  
+**Aktuální verze:** 0.13  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -78,7 +78,10 @@ Z aplikace 0.11 umíme číst a zobrazovat **další pole z PDF** (mohou být pr
 - `Validity Start Date`
 - `Validity End Date` *(libovolný text, ne jen datum)*
 
-Získávání probíhá **pouze z AcroForm polí**; když pole v PDF chybí, hodnota zůstane prázdná.
+Získávání probíhá primárně z **AcroForm polí**. Pokud PDF žádná pole nemá
+(flattened/„zploštělý" formulář), použije se od 0.13 **textový fallback** nad
+textovou vrstvou. U naskenovaných PDF bez textové vrstvy zůstanou hodnoty
+prázdné a PDF se v UI **označí** k ručnímu vyplnění (viz Changelog 0.13).
 
 ---
 
@@ -145,6 +148,12 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.13 — 2026-05-28
+- **feat(parser):** nový textový fallback pro **flattened PDF bez AcroForm polí**. Když formulář nemá interaktivní pole, vytěží se kontaktní blok (instituce, kandidát, jméno, e‑mail, telefon, adresa), datum podpisu a *Printed Name, Title* přímo z textové vrstvy. Podporuje dvě rozložení: hodnoty v blocích za labely i hodnoty zřetězené na jednom řádku (s očištěním e‑mailu od slepeného jména). Spouští se **jen** při prázdném AcroFormu, takže nemění chování běžných PDF.
+- **feat(scanner):** kontaktní pole se nově doplňují z tohoto fallbacku (dřív se braly jen z AcroFormu).
+- **feat(ui):** PDF bez AcroFormu a bez vytěžitelných hodnot (naskenovaný obraz / prázdný nebo poškozený formulář) se nově **označí**: v **PDF Browseru** se zobrazí varovný banner, v **Sorted PDFs** stavový text „⚠ Sken/prázdný formulář – vyplňte ručně". Označení zmizí, jakmile jsou hodnoty doplněny.
+- **fix(parser):** šablonový boilerplate sekce 5 se už nevyhodnocuje jako *Additional information* (odstraněn falešný pozitiv u prázdných formulářů).
+
 ### 0.12a — 2026-05-28
 - **feat(ui):** okno se při startu **defaultně maximalizuje** (není-li uložená geometrie okna). S uloženou geometrií se chování nemění — respektuje se poslední velikost/pozice.
 - **poznámka(prostředí):** chyba startu `Could not find the Qt platform plugin "cocoa"` byla způsobena poškozenou instalací PySide6 ve `.venv`. Řešení: `pip install --force-reinstall --no-cache-dir PySide6==6.11.1`.

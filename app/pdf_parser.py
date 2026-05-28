@@ -221,6 +221,116 @@ def _pdf_text_value(field: dict | None) -> Optional[str]:
         return None
     return str(v).strip() or None
 
+# --- Fallback pro flattened PDF bez AcroForm polí ---
+# Hodnoty jsou jen v textové vrstvě (buď jako bloky za labely, nebo zřetězené).
+_RE_EMAIL_NF = re.compile(r"[\w.\-]+@[\w.\-]+\.\w+")
+_RE_PHONE_NF = re.compile(r"\+?\d[\d\s().\-]{7,}\d")
+_TEMPLATE_EMAIL_LOCALPARTS = {"academia.chair"}
+
+def _find_signature_date_in_lines(lines: list[str]) -> tuple[Optional[str], Optional[int]]:
+    """Vrať (ISO datum, index řádku) posledního normalizovatelného data."""
+    best: tuple[Optional[str], Optional[int]] = (None, None)
+    for i, ln in enumerate(lines):
+        if not ln:
+            continue
+        iso = normalize_signature_date(ln)
+        if not iso:
+            m = re.search(
+                r"\d{1,2}\s+[A-Za-z]+\s+\d{4}|[A-Za-z]+\s+\d{1,2},?\s*\d{4}|\d{1,4}[./-]\d{1,2}[./-]\d{1,4}",
+                ln,
+            )
+            if m:
+                iso = normalize_signature_date(m.group(0))
+        if iso:
+            best = (iso, i)
+    return best
+
+def _extract_no_acroform_text(norm: str) -> Dict[str, Optional[str]]:
+    """Konzervativní extrakce z textu pro PDF bez AcroForm polí.
+
+    Spouští se jen když ve formuláři nejsou žádná pole; doplní pouze pole,
+    která má volající prázdná. Pro naskenovaná PDF bez textové vrstvy vrací
+    samé None (žádné falešné hodnoty).
+    """
+    out: Dict[str, Optional[str]] = {
+        "institution_name": None,
+        "candidate_name": None,
+        "contact_full_name": None,
+        "contact_email": None,
+        "contact_phone": None,
+        "contact_postal_address": None,
+        "signature_date": None,
+        "printed_name_title": None,
+    }
+    if not norm or not norm.strip():
+        return out
+    lines = [ln.strip() for ln in norm.splitlines()]
+
+    # 1) Datum podpisu + Printed Name (řádek před datem)
+    sig, di = _find_signature_date_in_lines(lines)
+    out["signature_date"] = sig
+    if di is not None:
+        for j in range(di - 1, -1, -1):
+            if lines[j] and "@" not in lines[j] and not _RE_PHONE_NF.search(lines[j]):
+                out["printed_name_title"] = lines[j]
+                break
+    name_tokens = []
+    if out["printed_name_title"]:
+        name_tokens = [t for t in re.split(r"[\s/,]+", out["printed_name_title"]) if t]
+
+    # 2) E-mail žadatele (přeskoč šablonové adresy)
+    app_email = None
+    for m in _RE_EMAIL_NF.finditer(norm):
+        if m.group(0).split("@", 1)[0].lower() in _TEMPLATE_EMAIL_LOCALPARTS:
+            continue
+        app_email = m
+        break
+
+    if app_email:
+        s, e, val = app_email.start(), app_email.end(), app_email.group(0)
+        at_line_start = (s == 0 or norm[s - 1] in "\n\r")
+        local, _, domain = val.partition("@")
+        # Pokud je e-mail zřetězený se jménem (není na začátku řádku), odstraň
+        # prefix odpovídající známým částem jména.
+        if not at_line_start and name_tokens:
+            for tok in name_tokens:
+                if len(tok) > 1 and local.lower().startswith(tok.lower()) and len(local) > len(tok):
+                    local = local[len(tok):].lstrip("._- ")
+                    break
+        out["contact_email"] = f"{local}@{domain}"
+
+        # Bloková layout (hodnoty pod labely): jména na řádcích před e-mailem.
+        if at_line_start:
+            bl = [ln for ln in norm[:s].splitlines() if ln.strip()]
+            if bl:
+                out["contact_full_name"] = bl[-1].strip()
+                if len(bl) >= 2:
+                    out["candidate_name"] = bl[-2].strip()
+                if len(bl) >= 3:
+                    out["institution_name"] = bl[-3].strip()
+
+        after = norm[e:]
+        pm = _RE_PHONE_NF.search(after)
+        if pm:
+            out["contact_phone"] = pm.group(0).strip()
+            rest = after[pm.end():].split("\n", 1)[0].strip()
+            if rest:
+                out["contact_postal_address"] = rest
+            else:
+                for ln in after[pm.end():].splitlines():
+                    if ln.strip():
+                        out["contact_postal_address"] = ln.strip()
+                        break
+
+    # 3) Doplň jméno z Printed Name, pokud chybí
+    if out["printed_name_title"]:
+        nm = re.split(r"[/,]", out["printed_name_title"])[0].strip()
+        if not out["candidate_name"]:
+            out["candidate_name"] = nm
+        if not out["contact_full_name"]:
+            out["contact_full_name"] = nm
+    return out
+
 def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | None = None) -> Dict[str, Optional[str]]:
     """
     Parse ISTQB Academia Application PDF.
@@ -363,6 +473,9 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
         if m:
             val = m.group(1).strip()
             val = _re.sub(r"\s+", " ", val).strip()
+            # Ignoruj šablonový boilerplate (prázdný formulář), ne reálná data.
+            if val.lower().startswith("the istqb") and "subject to the successful eligibility" in val.lower():
+                val = ""
             additional = val or None
 
     # Printed Name, Title – opatrně, jen pokud obsahuje jméno kandidáta
@@ -386,6 +499,19 @@ def parse_istqb_academia_application(text: str, form_fields: Dict[str, dict] | N
             if m:
                 title = _re.sub(r"\s+", " ", m.group(2)).strip()
                 printed_name_title = f"{cand_name}, {title}"
+
+    # ---------- Fallback pro flattened PDF bez AcroForm polí ----------
+    # Spustí se jen když formulář nemá žádná pole; doplní pouze prázdné hodnoty.
+    if not form_fields:
+        nf = _extract_no_acroform_text(norm)
+        if institution is None:            institution = nf["institution_name"]
+        if candidate is None:              candidate = nf["candidate_name"]
+        if contact_name is None:           contact_name = nf["contact_full_name"]
+        if email is None:                  email = nf["contact_email"]
+        if phone is None:                  phone = nf["contact_phone"]
+        if postal is None:                 postal = nf["contact_postal_address"]
+        if signature_date is None:         signature_date = nf["signature_date"]
+        if printed_name_title is None:     printed_name_title = nf["printed_name_title"]
 
     # ---------- Výstup ----------
     return {
