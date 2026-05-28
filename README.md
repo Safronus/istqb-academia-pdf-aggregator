@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.13a  
+**Aktuální verze:** 0.14  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -169,6 +169,11 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.14 — 2026-05-28
+- **fix(sorted):** oprava kritické chyby ve `rescan_sorted` – položky stromu měly **chybnou absolutní cestu** (chyběl segment `Sorted PDFs/`), takže `sorted_db.get()` házel `ValueError`. To rozbíjelo výběr ve stromu, **Edit → Save to DB** i zobrazení nově **exportovaných** PDF z Overview. Nyní se klíč DB správně převádí na absolutní cestu pod `sorted_root`.
+- **feat(overview):** sloupec **Sorted** nově rozlišuje tři stavy: prázdné (není v Sorted), **„Yes"** (zkopírováno do Sorted) a **„Edited"** (ručně doplněno v záložce Sorted PDFs). Editované záznamy mají **zelené pozadí** a **tooltip se seznamem polí**, která byla v Sorted doplněna/změněna oproti automaticky vytěženým hodnotám.
+- **i18n:** uživatelské texty kolem exportu a varování přepsány do **angličtiny** (kontextová akce „Export to 'Sorted PDFs' folder", stavové hlášky, varování u skenů).
+
 ### 0.13a — 2026-05-28
 - **docs/build:** popsán **iCloud-friendly venv** postup (venv v `~/.venvs/`, v projektu symlink `.venv`). Řeší opakovanou chybu `Could not find the Qt platform plugin "cocoa"` způsobenou tím, že iCloud duplikuje soubory v in-folder `.venv`.
 - **chore(gitignore):** ignoruj i symlink `.venv` (nejen adresář `.venv/`).

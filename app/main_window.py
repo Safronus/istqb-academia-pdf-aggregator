@@ -1446,9 +1446,9 @@ class MainWindow(QMainWindow):
             if exported > 0:
                 self.sorted_db.save()
                 self.rescan_sorted()
-                self.statusBar().showMessage(f"Exportováno {exported} souborů do 'Sorted PDFs'.")
+                self.statusBar().showMessage(f"Exported {exported} file(s) to 'Sorted PDFs'.")
             else:
-                QMessageBox.warning(self, "Export Failed", "Nepodařilo se exportovat žádný soubor.")
+                QMessageBox.warning(self, "Export Failed", "No files were exported.")
 
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Critical error: {e}")
@@ -1621,7 +1621,7 @@ class MainWindow(QMainWindow):
                 if not self.table.selectionModel().isSelected(idx):
                     self.table.selectRow(idx.row())
             menu = QMenu(self.table)
-            act_export_sorted = menu.addAction("Exportovat do složky 'Sorted PDFs'")
+            act_export_sorted = menu.addAction("Export to 'Sorted PDFs' folder")
             chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
             if chosen == act_export_sorted:
                 self.export_selected_to_sorted()
@@ -1744,32 +1744,45 @@ class MainWindow(QMainWindow):
             return
     
         # připrav hashe Sorted a zdroje pro roli
-        sorted_hashes = self._collect_sorted_hashes()
+        sorted_edits = self._collect_sorted_edits_by_hash()
         icon_ok = self.style().standardIcon(QStyle.SP_DialogApplyButton)
-        bg_brush = QBrush(QColor(240, 240, 240))  # světlá šedá
-    
+        icon_edited = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
+        bg_brush = QBrush(QColor(240, 240, 240))         # light grey: in Sorted
+        bg_edited = QBrush(QColor(214, 240, 214))        # light green: edited in Sorted
+
         rows = self._source_model.rowCount()
         for r in range(rows):
             idx_fn = self._source_model.index(r, fn_col)
             fname = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
-    
+
             mark = ""
+            tooltip = ""
+            edited = False
             try:
                 path = self._find_record_path_for_filename(fname)
                 if path:
                     dig = self._hash_file(path)
-                    if dig and dig in sorted_hashes:
-                        mark = "Yes"
+                    info = sorted_edits.get(dig) if dig else None
+                    if info is not None:
+                        edited = bool(info.get("edited"))
+                        mark = "Edited" if edited else "Yes"
+                        if edited:
+                            tooltip = self._sorted_filled_tooltip(fname, info.get("data", {}))
             except Exception:
                 mark = ""
-    
+
             idx_sorted = self._source_model.index(r, sorted_col)
             # nastav pouze data/role (žádné zásahy do selection)
             if (self._source_model.data(idx_sorted, Qt.DisplayRole) or "") != mark:
                 self._source_model.setData(idx_sorted, mark, Qt.DisplayRole)
             self._source_model.setData(idx_sorted, Qt.AlignCenter, Qt.TextAlignmentRole)
-            self._source_model.setData(idx_sorted, icon_ok if mark == "Yes" else None, Qt.DecorationRole)
-            self._source_model.setData(idx_sorted, bg_brush, Qt.BackgroundRole)
+            self._source_model.setData(
+                idx_sorted,
+                (icon_edited if edited else icon_ok) if mark else None,
+                Qt.DecorationRole,
+            )
+            self._source_model.setData(idx_sorted, bg_edited if edited else bg_brush, Qt.BackgroundRole)
+            self._source_model.setData(idx_sorted, tooltip or None, Qt.ToolTipRole)
             
     def _overview_apply_sorted_row_hiding(self) -> None:
         """
@@ -1789,7 +1802,8 @@ class MainWindow(QMainWindow):
         for r in range(rows):
             idx = self._proxy.index(r, sorted_col)
             val = self._proxy.data(idx, Qt.DisplayRole) or ""
-            self.table.setRowHidden(r, (val == "Yes") and (not show_sorted))
+            is_sorted = val in ("Yes", "Edited")
+            self.table.setRowHidden(r, is_sorted and (not show_sorted))
         
     def _on_overview_sorted_toggled(self, checked: bool) -> None:
         """
@@ -1902,6 +1916,78 @@ class MainWindow(QMainWindow):
             pass
         return hashes
     
+    def _collect_sorted_edits_by_hash(self) -> dict:
+        """
+        Map SHA-256 of each PDF tracked in the Sorted DB -> {'edited': bool, 'data': dict}.
+        Used by Overview to indicate which records were manually completed in the
+        'Sorted PDFs' tab (edited=True) and which fields were filled there.
+        """
+        out: dict = {}
+        try:
+            from pathlib import Path
+            sroot = Path(self.sorted_db.sorted_root)
+            for key, rec in self.sorted_db.iter_items():
+                try:
+                    abs_p = (sroot / key).resolve()
+                    if not abs_p.exists():
+                        continue
+                    dig = self._hash_file(abs_p)
+                    if not dig:
+                        continue
+                    out[dig] = {
+                        "edited": bool(rec.get("edited")),
+                        "data": rec.get("data", {}) or {},
+                    }
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return out
+
+    # Human-readable labels for the "filled in Sorted" tooltip
+    _SORTED_FIELD_LABELS = {
+        "application_type": "Application Type",
+        "institution_name": "Institution Name",
+        "candidate_name": "Candidate Name",
+        "recognition_academia": "Academia Recognition",
+        "recognition_certified": "Certified Recognition",
+        "contact_full_name": "Full Name",
+        "contact_email": "Email",
+        "contact_phone": "Phone",
+        "contact_postal_address": "Postal Address",
+        "syllabi_integration_description": "Syllabi Integration",
+        "courses_modules_list": "Courses/Modules",
+        "proof_of_istqb_certifications": "Proof of Certifications",
+        "university_links": "University Links",
+        "additional_information_documents": "Additional Info",
+        "printed_name_title": "Printed Name, Title",
+        "signature_date": "Signature Date",
+        "receiving_member_board": "Receiving Member Board",
+        "date_received": "Date Received",
+        "validity_start_date": "Validity Start Date",
+        "validity_end_date": "Validity End Date",
+    }
+
+    def _sorted_filled_tooltip(self, fname: str, edited_data: dict) -> str:
+        """Tooltip listing fields that were filled/changed in the Sorted PDFs tab
+        relative to what was auto-parsed for this PDF."""
+        try:
+            parsed = {}
+            rec = next((x for x in getattr(self, "records", []) if x.path.name == fname), None)
+            if rec is not None:
+                parsed = rec.to_dict()
+            filled = []
+            for key, label in self._SORTED_FIELD_LABELS.items():
+                new_val = str((edited_data or {}).get(key, "") or "").strip()
+                old_val = str((parsed or {}).get(key, "") or "").strip()
+                if new_val and new_val != old_val:
+                    filled.append(label)
+            if not filled:
+                return "Manually edited in Sorted PDFs."
+            return "Filled/edited in Sorted PDFs:\n• " + "\n• ".join(filled)
+        except Exception:
+            return "Manually edited in Sorted PDFs."
+
     def _find_sorted_dirs(self):
         """
         Najdi složky 'Sorted PDFs' (case-insensitive) pod pdf_root i pod repo rootem.
@@ -3385,11 +3471,15 @@ class MainWindow(QMainWindow):
         sorted_root = getattr(self.sorted_db, "sorted_root", None)
         sorted_root = Path(sorted_root).resolve() if sorted_root else None
 
-        # Iterace položek z DB
+        # Iterace položek z DB.
+        # iter_items() vrací (rel_key, rec); rel_key převedeme na absolutní cestu
+        # pod sorted_root, aby výběr/edit/uložení fungovaly (jinak relative_to selže).
         def _iter_sorted_items():
             it = getattr(self.sorted_db, "iter_items", None)
             if callable(it):
-                yield from it()
+                for rel_key, rec in it():
+                    abs_sorted = (sorted_root / rel_key).resolve() if sorted_root else Path(rel_key)
+                    yield abs_sorted, rec
                 return
             # fallback
             try:
@@ -3635,7 +3725,7 @@ class MainWindow(QMainWindow):
         if rec and rec.get("edited"):
             self._sorted_set_status("Edited")
         elif bool(merged.get("needs_manual_entry")) or _identity_empty:
-            self._sorted_set_status("⚠ Sken/prázdný formulář – vyplňte ručně (Edit → Save to DB)")
+            self._sorted_set_status("⚠ Scanned/empty form – fill in manually (Edit → Save to DB)")
         else:
             self._sorted_set_status("Parsed (unmodified)")
         self._sorted_current_path = abs_path if abs_path else None
@@ -4184,8 +4274,8 @@ class MainWindow(QMainWindow):
             )
             if bool(data.get("needs_manual_entry")) or identity_empty:
                 self.lbl_browser_warning.setText(
-                    "⚠ Naskenované PDF nebo prázdný formulář bez textové vrstvy – "
-                    "hodnoty nelze automaticky vytěžit. Vyplňte ručně v záložce Sorted PDFs."
+                    "⚠ Scanned PDF or empty form with no text layer – "
+                    "values cannot be extracted automatically. Fill in manually in the Sorted PDFs tab."
                 )
                 self.lbl_browser_warning.setVisible(True)
             else:
