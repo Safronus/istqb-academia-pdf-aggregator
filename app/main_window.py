@@ -4595,35 +4595,19 @@ class MainWindow(QMainWindow):
     def _apply_global_sizing_once(self) -> None:
         """
         Orchestrátor fit-to-data:
-          1) zvětšení hlavního okna min. o 50 % (s limitem dle obrazovky),
+          1) maximalizace hlavního okna (není-li uložená geometrie),
           2) lokální fit v Overview,
           3) lokální fit ve Sorted PDFs,
           4) lokální fit v PDF Browseru (pokud existuje helper),
           5) zopakování po event loopu.
         """
-        from PySide6.QtGui import QGuiApplication
         from PySide6.QtCore import QTimer
-    
-        # 1) Zvětšení okna min. o 50 %; respektovat dostupný prostor obrazovky.
-        #    Pokud máme uloženou geometrii okna, nepřepisuj ji auto-zvětšením.
+
+        # 1) Bez uložené geometrie okno defaultně maximalizuj.
+        #    Pokud máme uloženou geometrii okna, respektuj ji (nepřepisuj).
         try:
             if not getattr(self, "_has_saved_geometry", False):
-                cw, ch = max(self.width(), 800), max(self.height(), 600)
-                desired_w = int(cw * 1.5)
-                desired_h = int(ch * 1.5)
-
-                scr = QGuiApplication.primaryScreen()
-                if scr:
-                    avail = scr.availableGeometry()
-                    max_w = int(avail.width() * 0.95)
-                    max_h = int(avail.height() * 0.95)
-                    desired_w = min(desired_w, max_w)
-                    desired_h = min(desired_h, max_h)
-
-                # Nepoužij menší než aktuální
-                desired_w = max(desired_w, cw)
-                desired_h = max(desired_h, ch)
-                self.resize(desired_w, desired_h)
+                self.showMaximized()
         except Exception:
             pass
     

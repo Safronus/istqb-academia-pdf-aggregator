@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.12  
+**Aktuální verze:** 0.12a  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -145,6 +145,10 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.12a — 2026-05-28
+- **feat(ui):** okno se při startu **defaultně maximalizuje** (není-li uložená geometrie okna). S uloženou geometrií se chování nemění — respektuje se poslední velikost/pozice.
+- **poznámka(prostředí):** chyba startu `Could not find the Qt platform plugin "cocoa"` byla způsobena poškozenou instalací PySide6 ve `.venv`. Řešení: `pip install --force-reinstall --no-cache-dir PySide6==6.11.1`.
+
 ### 0.12 — 2026-05-28
 - **feat(settings):** PDF kořen i složka **Sorted PDFs** jsou nově **vybíratelné za běhu** přes menu **File → Open PDF folder… / Open Sorted PDFs folder…** (`QFileDialog`).
 - **feat(settings):** aplikace si **pamatuje nastavení** mezi spuštěními v JSON souboru (`settings.json` v config adresáři OS, `QStandardPaths.AppConfigLocation`): poslední PDF složka, složka Sorted PDFs, velikost/pozice okna, poslední záložka a Overview filtry (hledání, board, *Hide Sorted*).
