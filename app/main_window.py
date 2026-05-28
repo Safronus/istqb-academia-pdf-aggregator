@@ -1763,8 +1763,9 @@ class MainWindow(QMainWindow):
         icon_edited = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
         icon_yes = self.style().standardIcon(QStyle.SP_DialogApplyButton)
         icon_no = self.style().standardIcon(QStyle.SP_DialogCancelButton)
-        bg_brush = QBrush(QColor(240, 240, 240))         # light grey: in Sorted
-        bg_edited = QBrush(QColor(214, 240, 214))        # light green: edited in Sorted
+        bg_brush = QBrush(QColor(56, 96, 64))            # green-ish: in Sorted
+        bg_edited = QBrush(QColor(64, 110, 72))          # brighter green: edited in Sorted
+        bg_no = QBrush(QColor(110, 64, 64))              # red-ish: NOT in Sorted
         fg_edited = QBrush(QColor(170, 255, 170))        # green text: edited cell value
 
         # data-key -> column index (přes poslední řádek popisku)
@@ -1783,9 +1784,10 @@ class MainWindow(QMainWindow):
             idx_fn = self._source_model.index(r, fn_col)
             fname = (self._source_model.data(idx_fn, Qt.DisplayRole) or "").strip()
 
-            mark = ""
-            tooltip = ""
+            mark = "No"
+            tooltip = "Not in Sorted PDFs"
             edited = False
+            in_sorted = False
             edit_data = None
             try:
                 path = self._find_record_path_for_filename(fname)
@@ -1793,13 +1795,16 @@ class MainWindow(QMainWindow):
                     dig = self._hash_file(path)
                     info = sorted_edits.get(dig) if dig else None
                     if info is not None:
+                        in_sorted = True
                         edited = bool(info.get("edited"))
                         mark = "Edited" if edited else "Yes"
                         if edited:
                             edit_data = info.get("data", {}) or {}
                             tooltip = self._sorted_filled_tooltip(fname, edit_data)
+                        else:
+                            tooltip = "In Sorted PDFs"
             except Exception:
-                mark = ""
+                mark = "No"
 
             idx_sorted = self._source_model.index(r, sorted_col)
             # nastav pouze data/role (žádné zásahy do selection)
@@ -1808,10 +1813,14 @@ class MainWindow(QMainWindow):
             self._source_model.setData(idx_sorted, Qt.AlignCenter, Qt.TextAlignmentRole)
             self._source_model.setData(
                 idx_sorted,
-                (icon_edited if edited else icon_ok) if mark else None,
+                icon_edited if edited else (icon_ok if in_sorted else icon_no),
                 Qt.DecorationRole,
             )
-            self._source_model.setData(idx_sorted, bg_edited if edited else bg_brush, Qt.BackgroundRole)
+            self._source_model.setData(
+                idx_sorted,
+                bg_edited if edited else (bg_brush if in_sorted else bg_no),
+                Qt.BackgroundRole,
+            )
             self._source_model.setData(idx_sorted, tooltip or None, Qt.ToolTipRole)
 
             # Zpětná vazba do tabulky: do buněk promítni ručně editované hodnoty
@@ -1907,6 +1916,21 @@ class MainWindow(QMainWindow):
             rgb = self._STATUS_COLORS.get(status, (90, 90, 96))
             m.setData(idx, QBrush(QColor(*rgb)), Qt.BackgroundRole)
             m.setData(idx, QBrush(QColor(245, 245, 245)), Qt.ForegroundRole)
+
+    def _overview_reorder_columns(self) -> None:
+        """Move Status (then Sorted) right after Board so they are immediately
+        visible. Logical column order is unchanged; only the visual order moves."""
+        try:
+            h = self.table.horizontalHeader()
+            h.setSectionsMovable(True)
+            status_col = self._overview_find_col("Status")
+            sorted_col = self._overview_find_col("Sorted")
+            if status_col is not None:
+                h.moveSection(h.visualIndex(status_col), 1)
+            if sorted_col is not None:
+                h.moveSection(h.visualIndex(sorted_col), 2)
+        except Exception:
+            pass
 
     def _overview_set_status_for_selection(self, status: str) -> None:
         """Set workflow status for all selected Overview rows."""
@@ -4797,9 +4821,13 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # naplň sloupec Status a obnov souhrn
+        # naplň sloupec Status, přesuň indikátory dopředu a obnov souhrn
         try:
             self._overview_apply_statuses()
+        except Exception:
+            pass
+        try:
+            self._overview_reorder_columns()
         except Exception:
             pass
         try:

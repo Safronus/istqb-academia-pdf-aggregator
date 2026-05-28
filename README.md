@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.15  
+**Aktuální verze:** 0.15a  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -169,6 +169,10 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.15a — 2026-05-28
+- **feat(overview):** sloupce **Status** a **Sorted** se zobrazují hned za sloupcem **Board** (vizuálně přesunuté dopředu; sloupce lze nově i ručně přetahovat).
+- **feat(overview):** sloupec **Sorted** je teď jednoznačný indikátor: **Yes** (zelená) / **Edited** (zelená) = je v Sorted PDFs, **No** (červená) = není. Dříve byla u „není" jen prázdná buňka.
+
 ### 0.15 — 2026-05-28
 - **feat(status):** každý PDF záznam má **workflow stav** (sloupec **Status** v Overview, barevně): *In Progress* (výchozí), *Completed*, *Ready for Web*, *Published on Web*, *Problematic*. Nastavuje se přes kontextové menu (podporuje hromadný výběr). Stav se ukládá lokálně (`statuses.json` v config adresáři, klíč `board/file_name`).
 - **feat(overview):** nové **kontextové akce** nad záznamy – *Set status* (5 stavů) a *Copy data to clipboard (email)* (členěný text se sekcemi 1–7, hodnoty „Field: value", včetně ručních úprav ze Sorted PDFs).
