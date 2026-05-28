@@ -44,3 +44,14 @@ Thumbs.db
 /**/Sorted PDFs/
 contacts.json
 recognized_people.json
+
+# Applicant data & exports — NEVER commit (PII). Source code only.
+*.pdf
+*.xlsx
+*.csv
+sorted_export_*.xlsx
+recognition_db.json
+sorted_db.json
+
+# Scratch/debug scripts (may hardcode real filenames/PII)
+debug_pdf.py
