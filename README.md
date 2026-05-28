@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.13  
+**Aktuální verze:** 0.13a  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -37,13 +37,34 @@ požadováno.
 
 ---
 
-## Instalace & spuštění (macOS)
+## Instalace & spuštění (macOS, iCloud-friendly)
+
+> ⚠️ Repo leží v iCloud-synchronizované složce (Desktop). **Venv proto patří mimo
+> iCloud** – jinak iCloud vytvoří duplicitní `… 2.*` soubory a rozbije instalaci
+> PySide6 (typicky chyba `Could not find the Qt platform plugin "cocoa"`).
+> Venv postavíme v `~/.venvs/` a v projektu na něj uděláme **symlink `.venv`**,
+> takže běžné `source .venv/bin/activate` funguje dál.
+
 ```bash
-python3 -m venv .venv
+# 1) Mimo iCloud postav venv
+mkdir -p ~/.venvs
+deactivate 2>/dev/null
+rm -rf .venv
+/opt/anaconda3/bin/python3 -m venv ~/.venvs/istqb-academia   # nebo jiný python3.10+
+
+# 2) V projektu vytvoř symlink na ten venv
+ln -s ~/.venvs/istqb-academia .venv
+
+# 3) Aktivuj a nainstaluj závislosti
 source .venv/bin/activate
-pip install -r requirements.txt  # je-li k dispozici; jinak: pip install PySide6
-python main.py --root "/cesta/k/kořeni/PDF"
+pip install PySide6 pypdf PyPDF2 pdfminer.six openpyxl
+
+# 4) Spusť
+python main.py --pdf-root "/cesta/k/kořeni/PDF"
 ```
+
+> Pozn.: pokud máš v aktuálním terminálu starou aktivaci (`(.venv)` v promptu),
+> nejdřív `deactivate` a pak znovu `source .venv/bin/activate`.
 - `--pdf-root` míří na **kořen adresáře s PDF** (podadresáře = boards jako `CFTL`, `LTSTQB`, …). Je **nepovinný** — bez něj se použije naposledy uložená složka, jinak výchozí `./PDF`.  
 - Složku s PDF i složku **Sorted PDFs** lze kdykoli změnit v menu **File** (volba se uloží).  
 - Při prvním spuštění se vytvoří (pokud chybí) adresář **Sorted PDFs** pro lokální DB a exporty.
@@ -148,6 +169,10 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.13a — 2026-05-28
+- **docs/build:** popsán **iCloud-friendly venv** postup (venv v `~/.venvs/`, v projektu symlink `.venv`). Řeší opakovanou chybu `Could not find the Qt platform plugin "cocoa"` způsobenou tím, že iCloud duplikuje soubory v in-folder `.venv`.
+- **chore(gitignore):** ignoruj i symlink `.venv` (nejen adresář `.venv/`).
+
 ### 0.13 — 2026-05-28
 - **feat(parser):** nový textový fallback pro **flattened PDF bez AcroForm polí**. Když formulář nemá interaktivní pole, vytěží se kontaktní blok (instituce, kandidát, jméno, e‑mail, telefon, adresa), datum podpisu a *Printed Name, Title* přímo z textové vrstvy. Podporuje dvě rozložení: hodnoty v blocích za labely i hodnoty zřetězené na jednom řádku (s očištěním e‑mailu od slepeného jména). Spouští se **jen** při prázdném AcroFormu, takže nemění chování běžných PDF.
 - **feat(scanner):** kontaktní pole se nově doplňují z tohoto fallbacku (dřív se braly jen z AcroFormu).
