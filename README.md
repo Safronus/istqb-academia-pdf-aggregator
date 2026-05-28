@@ -1,7 +1,7 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.15b  
-**Datum vydání:** 2026-05-28  
+**Aktuální verze:** 0.15c  
+**Datum vydání:** 2026-05-29  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
 Aplikace slouží k vyhledávání, parsování, třídění a exportu údajů z
@@ -169,6 +169,9 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.15c — 2026-05-29
+- **feat(overview):** dvojklik na záznam (i tlačítko *Open Selected PDF*) otevře PDF v **Adobe Acrobatu** (na macOS přes `open -a "Adobe Acrobat"`); pokud Acrobat není nainstalován, použije se výchozí prohlížeč PDF.
+
 ### 0.15b — 2026-05-28
 - **feat(overview):** nová kontextová akce **Edit…** – otevře dialog s editací všech polí daného PDF. Po uložení se data zapíšou do Sorted DB (pokud PDF ještě není v Sorted PDFs, automaticky se tam zkopíruje) a změny se hned promítnou do Overview (zvýraznění + indikátor *Edited*).
 

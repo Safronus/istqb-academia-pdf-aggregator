@@ -5142,13 +5142,44 @@ class MainWindow(QMainWindow):
     from PySide6.QtGui import QDesktopServices
     from PySide6.QtCore import QUrl   
     
-    def open_selected_pdf(self) -> None:
+    def open_selected_pdf(self, *args) -> None:
         rec = self._selected_record()
         if not rec:
             QMessageBox.information(self, "Open PDF", "Please select a row first.")
             return
-        # 0.6d: QDesktopServices.openUrl vyžaduje QUrl; posílejme lokální souborový URL
-        QDesktopServices.openUrl(self.QUrl.fromLocalFile(str(rec.path)))
+        self._open_pdf_external(rec.path)
+
+    def _open_pdf_external(self, path) -> None:
+        """Open a PDF in Adobe Acrobat on macOS (trying common app names),
+        falling back to the OS default viewer if Acrobat isn't installed."""
+        import sys
+        import subprocess
+        from pathlib import Path
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        from PySide6.QtWidgets import QMessageBox
+
+        p = Path(path)
+        if not p.exists():
+            QMessageBox.warning(self, "Open PDF", f"File not found:\n{p}")
+            return
+        if sys.platform == "darwin":
+            for app_name in (
+                "Adobe Acrobat",
+                "Adobe Acrobat Reader",
+                "Adobe Acrobat Reader DC",
+                "Adobe Acrobat Pro DC",
+                "Adobe Acrobat DC",
+            ):
+                try:
+                    r = subprocess.run(["open", "-a", app_name, str(p)],
+                                       capture_output=True)
+                    if r.returncode == 0:
+                        return
+                except Exception:
+                    pass
+        # Fallback: OS default PDF viewer
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
 
     def _open_from_tree(self, index) -> None:
         path = Path(self.fs_model.filePath(index))
