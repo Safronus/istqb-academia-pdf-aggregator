@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.15a  
+**Aktuální verze:** 0.15b  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -169,6 +169,9 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.15b — 2026-05-28
+- **feat(overview):** nová kontextová akce **Edit…** – otevře dialog s editací všech polí daného PDF. Po uložení se data zapíšou do Sorted DB (pokud PDF ještě není v Sorted PDFs, automaticky se tam zkopíruje) a změny se hned promítnou do Overview (zvýraznění + indikátor *Edited*).
+
 ### 0.15a — 2026-05-28
 - **feat(overview):** sloupce **Status** a **Sorted** se zobrazují hned za sloupcem **Board** (vizuálně přesunuté dopředu; sloupce lze nově i ručně přetahovat).
 - **feat(overview):** sloupec **Sorted** je teď jednoznačný indikátor: **Yes** (zelená) / **Edited** (zelená) = je v Sorted PDFs, **No** (červená) = není. Dříve byla u „není" jen prázdná buňka.

@@ -1626,13 +1626,16 @@ class MainWindow(QMainWindow):
                 if not self.table.selectionModel().isSelected(idx):
                     self.table.selectRow(idx.row())
             menu = QMenu(self.table)
+            act_edit = menu.addAction("Edit…")
             act_export_sorted = menu.addAction("Export to 'Sorted PDFs' folder")
             act_copy = menu.addAction("Copy data to clipboard (email)")
             menu.addSeparator()
             status_menu = menu.addMenu("Set status")
             status_actions = {status_menu.addAction(s): s for s in STATUSES}
             chosen = menu.exec_(self.table.viewport().mapToGlobal(pos))
-            if chosen == act_export_sorted:
+            if chosen == act_edit:
+                self._overview_edit_selected()
+            elif chosen == act_export_sorted:
                 self.export_selected_to_sorted()
                 # minimální doplněk: po exportu přepočti Sorted + aplikuj hiding (tiché, bez zásahu do výběru)
                 try:
@@ -2070,6 +2073,150 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         return data
+
+    # ---- Edit dialog (from Overview) ----
+    _EDIT_FIELDS = [
+        ("application_type", "Application Type", "line"),
+        ("institution_name", "Institution Name", "line"),
+        ("candidate_name", "Candidate Name", "line"),
+        ("recognition_academia", "Academia Recognition", "yesno"),
+        ("recognition_certified", "Certified Recognition", "yesno"),
+        ("contact_full_name", "Full Name", "line"),
+        ("contact_email", "Email", "line"),
+        ("contact_phone", "Phone", "line"),
+        ("contact_postal_address", "Postal Address", "multi"),
+        ("syllabi_integration_description", "Syllabi Integration", "multi"),
+        ("courses_modules_list", "Courses/Modules", "multi"),
+        ("proof_of_istqb_certifications", "Proof of ISTQB Certifications", "multi"),
+        ("university_links", "University Links", "multi"),
+        ("additional_information_documents", "Additional Info/Documents", "multi"),
+        ("printed_name_title", "Printed Name, Title", "line"),
+        ("signature_date", "Signature Date", "line"),
+        ("receiving_member_board", "Receiving Member Board", "line"),
+        ("date_received", "Date Received", "line"),
+        ("validity_start_date", "Validity Start Date", "line"),
+        ("validity_end_date", "Validity End Date", "line"),
+    ]
+
+    def _open_edit_dialog(self, data: dict, title: str):
+        """Modal editor for a single record. Returns new data dict or None."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QFormLayout, QScrollArea, QWidget,
+            QLineEdit, QPlainTextEdit, QComboBox, QDialogButtonBox, QLabel,
+        )
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.resize(640, 720)
+        outer = QVBoxLayout(dlg)
+        info = QLabel(f"<b>Board:</b> {data.get('board','')}&nbsp;&nbsp;&nbsp;"
+                      f"<b>File:</b> {data.get('file_name','')}")
+        info.setWordWrap(True)
+        outer.addWidget(info)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        host = QWidget()
+        form = QFormLayout(host)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        widgets = {}
+        for key, label, kind in self._EDIT_FIELDS:
+            val = str(data.get(key, "") or "")
+            if kind == "yesno":
+                w = QComboBox()
+                w.addItems(["", "Yes", "No"])
+                i = w.findText(val) if val else 0
+                w.setCurrentIndex(i if i >= 0 else 0)
+            elif kind == "multi":
+                w = QPlainTextEdit()
+                w.setPlainText(val)
+                w.setMaximumHeight(80)
+            else:
+                w = QLineEdit(val)
+            widgets[key] = w
+            form.addRow(label + ":", w)
+        scroll.setWidget(host)
+        outer.addWidget(scroll, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        outer.addWidget(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        out = {}
+        for key, label, kind in self._EDIT_FIELDS:
+            w = widgets[key]
+            if kind == "yesno":
+                out[key] = w.currentText().strip()
+            elif kind == "multi":
+                out[key] = w.toPlainText().strip()
+            else:
+                out[key] = w.text().strip()
+        return out
+
+    def _overview_edit_selected(self) -> None:
+        """Edit the selected Overview record in a dialog; persist to the Sorted DB
+        (copying the PDF into Sorted PDFs first if it isn't there yet)."""
+        from pathlib import Path
+        import shutil
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QMessageBox
+        sm = self.table.selectionModel()
+        if sm is None or not sm.hasSelection():
+            QMessageBox.information(self, "Edit", "Please select a row.")
+            return
+        fn_col = self._overview_find_col("File name")
+        board_col = self._overview_find_col("Board")
+        rows = sm.selectedRows(fn_col) if fn_col is not None else []
+        if not rows:
+            return
+        pidx = rows[0]
+        abs_p = pidx.data(Qt.UserRole + 1) or self._find_record_path_for_filename(
+            (pidx.data(Qt.DisplayRole) or "").strip())
+        if not abs_p:
+            QMessageBox.warning(self, "Edit", "Could not resolve the PDF path.")
+            return
+        abs_p = Path(abs_p)
+        board = ""
+        if board_col is not None:
+            board = (pidx.siblingAtColumn(board_col).data(Qt.DisplayRole) or "").strip()
+        if not board:
+            board = abs_p.parent.name
+
+        data = self._overview_effective_data(abs_p)
+        data["board"] = data.get("board") or board
+        data["file_name"] = abs_p.name
+
+        new_data = self._open_edit_dialog(dict(data), f"Edit – {abs_p.name}")
+        if new_data is None:
+            return
+        new_data["board"] = data.get("board")
+        new_data["file_name"] = abs_p.name
+
+        target_board = "".join(c for c in (data.get("board") or "Unsorted")
+                               if c.isalnum() or c in (" ", "-", "_")).strip() or "Unsorted"
+        dest_dir = (self.sorted_root / target_board).resolve()
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_file = dest_dir / abs_p.name
+            if not dest_file.exists():
+                shutil.copy2(abs_p, dest_file)
+        except Exception as e:
+            QMessageBox.critical(self, "Edit", f"Could not copy PDF to Sorted PDFs: {e}")
+            return
+        new_data["path"] = str(dest_file)
+        self.sorted_db.mark_edited(dest_file, new_data)
+        self.sorted_db.save()
+        try:
+            self.rescan_sorted()
+            self._overview_update_sorted_flags()
+            self._overview_apply_sorted_row_hiding()
+            self._overview_apply_statuses()
+            self._refresh_summary()
+        except Exception:
+            pass
+        try:
+            self.statusBar().showMessage(f"Saved edits for {abs_p.name}.")
+        except Exception:
+            pass
 
     # ---- Summary tab ----
     _SUMMARY_CORE_FIELDS = [
