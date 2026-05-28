@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.15c  
+**Aktuální verze:** 0.15d  
 **Datum vydání:** 2026-05-29  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -169,6 +169,9 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.15d — 2026-05-29
+- **fix(overview):** dvojklik (a *Open Selected PDF*) hlásil „Please select a row first" – `_selected_record` bral cestu z **posledního** sloupce, kterým je po přidání sloupce *Status* právě Status, ne *File name*. Nově se sloupec *File name* hledá podle názvu (+ fallback na shodu podle názvu souboru).
+
 ### 0.15c — 2026-05-29
 - **feat(overview):** dvojklik na záznam (i tlačítko *Open Selected PDF*) otevře PDF v **Adobe Acrobatu** (na macOS přes `open -a "Adobe Acrobat"`); pokud Acrobat není nainstalován, použije se výchozí prohlížeč PDF.
 

@@ -1236,7 +1236,9 @@ class MainWindow(QMainWindow):
         if not sel or not sel.hasSelection():
             return None
         index = sel.selectedRows()[0]
-        FILE_COL = 16
+        FILE_COL = self._overview_find_col("File name")
+        if FILE_COL is None:
+            FILE_COL = (self.table.model().columnCount() - 1) if self.table.model() else 0
         proxy = self.table.model()
         if isinstance(proxy, QSortFilterProxyModel):
             sidx = proxy.mapToSource(proxy.index(index.row(), FILE_COL))
@@ -1248,6 +1250,12 @@ class MainWindow(QMainWindow):
         for r in self.records:
             if str(r.path) == path_str:
                 return r
+        # Fallback: match by file name shown in the cell
+        fname = src.index(sidx.row(), FILE_COL).data(Qt.DisplayRole)
+        if fname:
+            for r in self.records:
+                if r.path.name == str(fname).strip():
+                    return r
         return None
 
     def _visible_columns(self) -> list[int]:
@@ -5042,16 +5050,19 @@ class MainWindow(QMainWindow):
         # First selected row in the proxy model
         pindex = sel.selectedRows()[0]
         proxy = view.model()
+        file_col = self._overview_find_col("File name")
         if isinstance(proxy, QSortFilterProxyModel):
             # Map selected proxy row to source row; column doesn't matter for row mapping
             srow = proxy.mapToSource(proxy.index(pindex.row(), 0)).row()
             src = proxy.sourceModel()
-            file_col = src.columnCount() - 1  # last column stores filename/full path
+            if file_col is None:
+                file_col = src.columnCount() - 1
             idx = src.index(srow, file_col)
             path_str = idx.data(Qt.UserRole + 1) or idx.data()
         else:
             src = proxy
-            file_col = src.columnCount() - 1
+            if file_col is None:
+                file_col = src.columnCount() - 1
             idx = src.index(pindex.row(), file_col)
             path_str = idx.data(Qt.UserRole + 1) or idx.data()
     
