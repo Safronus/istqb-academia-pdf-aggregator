@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.14a  
+**Aktuální verze:** 0.14b  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -169,6 +169,9 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.14b — 2026-05-28
+- **feat(overview):** **zpětná vazba editovaných hodnot do tabulky Overview.** Hodnoty doplněné/změněné ručně v záložce Sorted PDFs se nyní promítnou přímo do buněk Overview (zeleně zvýrazněný text + tooltip „Edited in Sorted PDFs"), včetně ikonek Yes/No u *Academia/Certified Recognition*. Aktualizuje se hned po **Save to DB** i při rescanu.
+
 ### 0.14a — 2026-05-28
 - **fix(export):** **Board** se při exportu z Overview určoval substringově (`"board"`), takže ho chybně „přebil" sloupec *Receiving Member Board* → PDF se ukládalo pod **Unsorted**. Nově se bere přesně sloupec *Board* (poslední řádek popisku). Opraveno mj. pro nové boardy (např. `FISTB`).
 - **fix(export):** export nově zapisuje záznam jako **parsed (edited=False)** přes `upsert_parsed` (dřív `mark_edited`). Stav **„Edited"** v Overview se tak objeví **až po skutečné ruční editaci** v Sorted PDFs; opakovaný export navíc **nepřepíše** již ručně doplněné hodnoty.

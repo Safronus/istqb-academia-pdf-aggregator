@@ -1743,8 +1743,22 @@ class MainWindow(QMainWindow):
         sorted_edits = self._collect_sorted_edits_by_hash()
         icon_ok = self.style().standardIcon(QStyle.SP_DialogApplyButton)
         icon_edited = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
+        icon_yes = self.style().standardIcon(QStyle.SP_DialogApplyButton)
+        icon_no = self.style().standardIcon(QStyle.SP_DialogCancelButton)
         bg_brush = QBrush(QColor(240, 240, 240))         # light grey: in Sorted
         bg_edited = QBrush(QColor(214, 240, 214))        # light green: edited in Sorted
+        fg_edited = QBrush(QColor(170, 255, 170))        # green text: edited cell value
+
+        # data-key -> column index (přes poslední řádek popisku)
+        field_cols = {}
+        for key, tail in self._SORTED_FIELD_LABELS.items():
+            c = self._overview_find_col(tail)
+            if c is not None:
+                field_cols[key] = c
+        recog_cols = {field_cols.get("recognition_academia"), field_cols.get("recognition_certified")}
+
+        def _yes(v: str) -> bool:
+            return (v or "").strip().lower() in {"yes", "on", "true", "1", "checked"}
 
         rows = self._source_model.rowCount()
         for r in range(rows):
@@ -1754,6 +1768,7 @@ class MainWindow(QMainWindow):
             mark = ""
             tooltip = ""
             edited = False
+            edit_data = None
             try:
                 path = self._find_record_path_for_filename(fname)
                 if path:
@@ -1763,7 +1778,8 @@ class MainWindow(QMainWindow):
                         edited = bool(info.get("edited"))
                         mark = "Edited" if edited else "Yes"
                         if edited:
-                            tooltip = self._sorted_filled_tooltip(fname, info.get("data", {}))
+                            edit_data = info.get("data", {}) or {}
+                            tooltip = self._sorted_filled_tooltip(fname, edit_data)
             except Exception:
                 mark = ""
 
@@ -1779,6 +1795,21 @@ class MainWindow(QMainWindow):
             )
             self._source_model.setData(idx_sorted, bg_edited if edited else bg_brush, Qt.BackgroundRole)
             self._source_model.setData(idx_sorted, tooltip or None, Qt.ToolTipRole)
+
+            # Zpětná vazba do tabulky: do buněk promítni ručně editované hodnoty
+            # ze Sorted PDFs a barevně je zvýrazni (text + tooltip).
+            if edited and edit_data is not None:
+                for key, col in field_cols.items():
+                    new_val = str(edit_data.get(key, "") or "").strip()
+                    cell = self._source_model.index(r, col)
+                    old_val = (self._source_model.data(cell, Qt.DisplayRole) or "").strip()
+                    if not new_val or new_val == old_val:
+                        continue
+                    self._source_model.setData(cell, new_val, Qt.DisplayRole)
+                    self._source_model.setData(cell, fg_edited, Qt.ForegroundRole)
+                    self._source_model.setData(cell, "Edited in Sorted PDFs", Qt.ToolTipRole)
+                    if col in recog_cols:
+                        self._source_model.setData(cell, icon_yes if _yes(new_val) else icon_no, Qt.DecorationRole)
             
     def _overview_apply_sorted_row_hiding(self) -> None:
         """
@@ -1948,14 +1979,14 @@ class MainWindow(QMainWindow):
         "recognition_academia": "Academia Recognition",
         "recognition_certified": "Certified Recognition",
         "contact_full_name": "Full Name",
-        "contact_email": "Email",
-        "contact_phone": "Phone",
+        "contact_email": "Email Address",
+        "contact_phone": "Phone Number",
         "contact_postal_address": "Postal Address",
         "syllabi_integration_description": "Syllabi Integration",
         "courses_modules_list": "Courses/Modules",
-        "proof_of_istqb_certifications": "Proof of Certifications",
+        "proof_of_istqb_certifications": "Proof of ISTQB Certifications",
         "university_links": "University Links",
-        "additional_information_documents": "Additional Info",
+        "additional_information_documents": "Additional Info/Documents",
         "printed_name_title": "Printed Name, Title",
         "signature_date": "Signature Date",
         "receiving_member_board": "Receiving Member Board",
@@ -3800,9 +3831,15 @@ class MainWindow(QMainWindow):
     
         self.sorted_db.mark_edited(Path(abs_path), new_data)
         self.sorted_db.save()
-    
+
         self._sorted_set_editable(False)
         self._sorted_set_status("Edited")
+        # Promítni úpravu zpět do Overview (hodnoty + 'Edited' indikátor).
+        try:
+            self._overview_update_sorted_flags()
+            self._overview_apply_sorted_row_hiding()
+        except Exception:
+            pass
         try:
             self.statusBar().showMessage("Saved to DB.")
         except Exception:
