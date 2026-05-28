@@ -1,6 +1,6 @@
 # ISTQB Academia PDF Aggregator
 
-**Aktuální verze:** 0.14  
+**Aktuální verze:** 0.14a  
 **Datum vydání:** 2026-05-28  
 **Platforma:** macOS (PySide6, dark‑theme friendly)
 
@@ -169,6 +169,10 @@ git rev-parse HEAD
 ---
 
 ## Changelog od 0.11
+### 0.14a — 2026-05-28
+- **fix(export):** **Board** se při exportu z Overview určoval substringově (`"board"`), takže ho chybně „přebil" sloupec *Receiving Member Board* → PDF se ukládalo pod **Unsorted**. Nově se bere přesně sloupec *Board* (poslední řádek popisku). Opraveno mj. pro nové boardy (např. `FISTB`).
+- **fix(export):** export nově zapisuje záznam jako **parsed (edited=False)** přes `upsert_parsed` (dřív `mark_edited`). Stav **„Edited"** v Overview se tak objeví **až po skutečné ruční editaci** v Sorted PDFs; opakovaný export navíc **nepřepíše** již ručně doplněné hodnoty.
+
 ### 0.14 — 2026-05-28
 - **fix(sorted):** oprava kritické chyby ve `rescan_sorted` – položky stromu měly **chybnou absolutní cestu** (chyběl segment `Sorted PDFs/`), takže `sorted_db.get()` házel `ValueError`. To rozbíjelo výběr ve stromu, **Edit → Save to DB** i zobrazení nově **exportovaných** PDF z Overview. Nyní se klíč DB správně převádí na absolutní cestu pod `sorted_root`.
 - **feat(overview):** sloupec **Sorted** nově rozlišuje tři stavy: prázdné (není v Sorted), **„Yes"** (zkopírováno do Sorted) a **„Edited"** (ručně doplněno v záložce Sorted PDFs). Editované záznamy mají **zelené pozadí** a **tooltip se seznamem polí**, která byla v Sorted doplněna/změněna oproti automaticky vytěženým hodnotám.

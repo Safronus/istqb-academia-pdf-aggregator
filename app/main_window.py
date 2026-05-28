@@ -1367,20 +1367,13 @@ class MainWindow(QMainWindow):
         if model is None:
             return
 
-        # 1. Dynamické nalezení indexů sloupců
-        col_board = 0
-        col_file = -1
-        
-        for c in range(model.columnCount()):
-            header = model.headerData(c, Qt.Horizontal, Qt.DisplayRole)
-            if header:
-                header = str(header).lower()
-                if "board" in header:
-                    col_board = c
-                elif "file name" in header:
-                    col_file = c
-
-        if col_file == -1:
+        # 1. Indexy sloupců – přesně podle posledního řádku popisku.
+        #    Pozor: substringové "board" by chybně chytlo i "Receiving Member Board".
+        col_board = self._overview_find_col("Board")
+        col_file = self._overview_find_col("File name")
+        if col_board is None:
+            col_board = 0
+        if col_file is None:
             col_file = model.columnCount() - 1
 
         exported = 0
@@ -1437,10 +1430,13 @@ class MainWindow(QMainWindow):
                     print(f"[Export Error] Copy failed: {e}")
                     continue
 
-                # 6. Update DB - POUŽITÍ mark_edited MÍSTO update
+                # 6. Zápis do DB jako PARSED (edited=False). 'Edited' v Overview
+                #    se objeví až po ruční editaci v záložce Sorted PDFs.
+                #    upsert_parsed navíc respektuje již ručně editované záznamy.
                 record_data["board"] = target_board
-                self.sorted_db.mark_edited(dest_file, record_data)
-                
+                record_data["file_name"] = src_path.name
+                self.sorted_db.upsert_parsed(dest_file, target_board, src_path.name, record_data)
+
                 exported += 1
 
             if exported > 0:
